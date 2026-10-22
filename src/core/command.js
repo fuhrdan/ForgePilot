@@ -36,11 +36,14 @@ function runRaw(command, args, { cwd, timeoutMs = 120000, env = {} } = {}) {
 
         let child;
         try {
+            const childEnv = { ...process.env, ...env };
+            // Do not leak Node's parent test-runner control channel into nested project test runs.
+            delete childEnv.NODE_TEST_CONTEXT;
             child = spawn(command, args, {
                 cwd,
                 shell: false,
                 windowsHide: true,
-                env: { ...process.env, ...env }
+                env: childEnv
             });
         } catch (error) {
             resolve({ command, args, exitCode: -1, stdout, stderr: error.message, timedOut, durationMs: Date.now() - startedAt });

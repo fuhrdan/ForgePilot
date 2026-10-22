@@ -7,6 +7,7 @@ export class ScriptedPlanner {
         return {
             goal: task.goal ?? "Scripted ForgePilot task",
             rationale: task.rationale ?? "Actions supplied by task file.",
+            testFirst: task.testFirst ?? null,
             actions: task.actions,
             verify: task.verify ?? []
         };

@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveInside } from "../core/paths.js";
 import { scanRepository } from "./scanner.js";
 import { detectProjects } from "./detector.js";
+import { discoverTesting } from "../testing/discovery.js";
 
 const TEXT_EXTENSIONS = new Set([
     ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt",
@@ -76,12 +77,15 @@ export async function buildRepositoryContext(workspace, {
         const key = `${hint.kind}:${hint.command}:${(hint.args ?? []).join(" ")}`;
         if (!commands.some((item) => item.key === key)) commands.push({ ...hint, key });
     }
+    const commandHints = commands.map(({ key, ...rest }) => rest);
+    const testing = await discoverTesting(workspace, scan.files, projects, commandHints, { goal });
 
     return {
         scan: { fileCount: scan.files.length, truncated: scan.truncated, source: scan.source },
         files: scan.files,
         projects,
-        commandHints: commands.map(({ key, ...rest }) => rest),
+        commandHints,
+        testing,
         selectedFiles: excerpts,
         budget: {
             maxTokens: Number(maxContextTokens),

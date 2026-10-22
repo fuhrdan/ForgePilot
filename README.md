@@ -1,10 +1,8 @@
-# ForgePilot v0.3.0
+# ForgePilot v0.4.0
 
-**A local-first software-engineering agent that plans, edits, executes, repairs, and independently verifies its work.**
+**A local-first software-engineering agent that proves its changes with executable evidence.**
 
-ForgePilot is intentionally built around evidence rather than agent confidence. A planner can propose code changes, but it cannot declare success. ForgePilot executes guarded actions, captures real process output, retries failures through a bounded repair loop, and runs an independent verifier.
-
-v0.3 adds **repository intelligence**: ForgePilot now detects what kind of codebase it is operating on, honors repository ignore rules, selects relevant source context under a token budget, suggests likely build/test commands, and audits the files changed since the task began.
+ForgePilot plans guarded edits, executes real tools, captures failures, performs bounded repairs, and runs an independent verifier. v0.4 adds a test-first engineering pipeline: a regression test is authored before implementation, ForgePilot proves it is RED, freezes that test, then requires GREEN/regression/build evidence before declaring success.
 
 ## Requirements
 
@@ -12,95 +10,202 @@ v0.3 adds **repository intelligence**: ForgePilot now detects what kind of codeb
 - Git recommended
 - Ollama optional for local-AI planning/debugging
 
-No npm dependencies are required.
+No npm runtime dependencies are required.
 
 ## Quick start
 
 ```powershell
 npm test
 node src/cli.js doctor
+node src/cli.js analyze . --goal "improve test-first engineering"
 ```
 
-Analyze a repository before asking an AI to touch it:
-
-```powershell
-node src/cli.js analyze . --goal "fix authentication retry handling"
-```
-
-Run the deterministic hello example:
+Run a normal deterministic task:
 
 ```powershell
 node src/cli.js run examples/hello-task.json --workspace .\work\hello --apply
 ```
 
-Run the autonomous-repair demonstration:
+Run the test-first demo on a copy of the included fixture:
 
 ```powershell
-node src/cli.js run examples/repair-task.json --workspace .\work\repair --apply --max-repairs 2
-```
-
-Use a local Ollama coding model:
-
-```powershell
-node src/cli.js run examples/ollama-task.json `
-  --planner ollama `
-  --model qwen2.5-coder:7b `
+Copy-Item -Recurse examples\test-first-project .\work\test-first
+node src/cli.js run .\work\test-first\task.json `
+  --workspace .\work\test-first `
   --apply
 ```
 
-Omit `--apply` to inspect the proposed plan without modifying the workspace.
-
-## What's new in v0.3
-
-### Repository scanner
-
-When the workspace is a Git repository, ForgePilot asks Git for tracked and non-ignored untracked files:
+The expected lifecycle is:
 
 ```text
-git ls-files -co --exclude-standard
+AUTHOR test
+   ↓
+RED (must fail for expected reason)
+   ↓
+freeze RED-proven test
+   ↓
+IMPLEMENT
+   ↓
+GREEN targeted test
+   ↓
+REGRESSION suite
+   ↓
+BUILD
+   ↓
+independent verification / Git scope / test integrity
+   ↓
+PASS
 ```
 
-That means the repository's real `.gitignore`, global excludes, and Git exclude rules are honored by Git itself. Outside a Git repository, ForgePilot uses a built-in `.gitignore`-aware scanner and always excludes common generated directories such as `.git`, `.forgepilot`, `node_modules`, `bin`, `obj`, `target`, `dist`, and `build`.
+Omit `--apply` to inspect a plan without modifying the workspace.
 
-### Project detection
+## What's new in v0.4
 
-v0.3 recognizes:
+### Test inventory and targeted selection
 
-- Node.js / JavaScript / TypeScript
-- React, Next.js, Angular, Vue, Svelte, Express, Fastify, NestJS, Electron, Vite
-- .NET / C#
-- Maven / Java
-- Gradle / Java/Kotlin
-- Python
-- Go
-- Rust
-- Godot / GDScript / C#
-- generic C and C++ repositories
+Repository intelligence now recognizes conventional tests across JavaScript/TypeScript, Python, Go, Java, C#, Godot, and generic `test/`, `tests/`, and `spec/` layouts.
 
-The detector also supplies likely build/test/lint commands from manifests and project structure.
+Tests are ranked using the task goal and the implementation paths the plan intends to change. Where safe to derive directly, ForgePilot creates targeted commands for Node's built-in test runner and `pytest`. Repository-level test/build commands remain regression/build gates.
 
-### Token-budgeted context
+`analyze` now shows testing information:
 
-ForgePilot no longer gives a planner only a flat filename list. It ranks repository files using:
+```text
+Testing:
+  - Test files: 9
+  - Selected tests: test/auth-session.test.js
+  - Targeted gate: node --test test/auth-session.test.js
+  - Regression gate: npm test
+```
 
-- task-goal terms;
-- source-directory relevance;
-- manifests and project metadata;
-- README/project documentation;
-- test/source naming.
+### Real RED evidence
 
-Selected text files are read under `maxContextTokens` (default: 6000 approximate tokens) and supplied to the planner. Source excerpts are transient and are **not persisted in the normal run report**.
+A non-zero exit code alone is not always meaningful. v0.4 distinguishes:
 
-Task JSON can override the budget:
+- **false green** — test already passes before implementation;
+- **infrastructure failure** — runner missing/blocked/timed out;
+- **wrong RED reason** — test failed, but expected failure text did not appear;
+- **valid RED** — test ran and failed for the expected reason.
+
+Optional RED signatures:
 
 ```json
 {
-  "goal": "Fix session expiration handling",
-  "maxContextTokens": 9000
+  "red": {
+    "command": "node",
+    "args": ["--test", "test/math.test.js"],
+    "failureIncludes": "Expected values to be strictly equal"
+  }
 }
 ```
 
-The CLI analyzer can use a separate budget:
+`stdoutIncludes` and `stderrIncludes` are also supported.
+
+### Test-only authoring policy
+
+Before RED, `testActions` may modify only recognized test paths or explicitly allowed test paths. Implementation does not begin until the test-authoring phase passes policy checks.
+
+### RED-proven tests become immutable
+
+After valid RED evidence, ForgePilot snapshots the authored test files. Implementation and repair actions cannot modify them, and the final verifier hashes them again.
+
+That prevents this failure mode:
+
+```text
+hard test fails
+    ↓
+agent weakens assertion
+    ↓
+"PASS"
+```
+
+ForgePilot instead fails the run if a RED-proven test changes.
+
+### Engineering gates
+
+In test-first mode, ForgePilot adds executable verification gates:
+
+- GREEN targeted test;
+- regression suite when discovered/supplied;
+- build gate(s) when discovered/supplied;
+- independent task checks;
+- test-integrity check;
+- Git-scope check when enabled.
+
+GREEN/regression/build failures enter the existing bounded repair loop. Repairs may change implementation code but not RED-proven tests.
+
+### Coverage ingestion
+
+If present, ForgePilot reads:
+
+```text
+coverage/lcov.info
+lcov.info
+coverage/coverage-summary.json
+coverage-summary.json
+```
+
+Line/function/branch/statement summaries are included in the report. Coverage is informational in v0.4 and is never fabricated.
+
+## Test-first task format
+
+```json
+{
+  "goal": "Fix add(a, b)",
+  "testFirst": {
+    "testActions": [
+      {
+        "type": "write_file",
+        "path": "test/math.test.js",
+        "content": "..."
+      }
+    ],
+    "red": {
+      "command": "node",
+      "args": ["--test", "test/math.test.js"],
+      "failureIncludes": "Expected values to be strictly equal"
+    },
+    "green": {
+      "command": "node",
+      "args": ["--test", "test/math.test.js"]
+    }
+  },
+  "actions": [
+    {
+      "type": "replace_text",
+      "path": "src/math.js",
+      "find": "return 0;",
+      "replace": "return a + b;"
+    }
+  ],
+  "verify": [
+    {
+      "type": "file_contains",
+      "path": "src/math.js",
+      "text": "return a + b;"
+    }
+  ]
+}
+```
+
+If `regression` or `build` are omitted, ForgePilot uses safely discovered repository commands where possible.
+
+See `docs/TEST_FIRST.md` for the full contract.
+
+## Repository intelligence
+
+v0.3 capabilities remain:
+
+- Git-native / `.gitignore`-aware scanning;
+- ecosystem/framework detection;
+- goal-aware token-budgeted source context;
+- build/test/lint command discovery;
+- Git baseline fingerprinting;
+- expected/unexpected changed-file attribution;
+- `git_diff` verification.
+
+Supported ecosystems include Node/TypeScript, .NET, Maven/Gradle Java, Python, Go, Rust, Godot, and generic C/C++.
+
+Analyze a repository:
 
 ```powershell
 node src/cli.js analyze C:\code\my-app `
@@ -108,311 +213,129 @@ node src/cli.js analyze C:\code\my-app `
   --max-context-tokens 4000
 ```
 
-### Build/test hints
+## Autonomous repair
 
-Examples:
-
-```text
-Node package.json scripts:
-  test:  npm test
-  build: npm run build
-  lint:  npm run lint
-
-.NET:
-  build: dotnet build
-  test:  dotnet test --no-build
-
-Go:
-  test:  go test ./...
-  build: go build ./...
-
-Rust:
-  test:  cargo test
-  build: cargo build
-```
-
-Hints are context, not automatically trusted commands. The planner still produces structured actions and the executor still enforces its command allowlist.
-
-## Git change intelligence
-
-At the beginning of an applied task, ForgePilot records a Git-aware baseline containing file fingerprints. After execution it compares the current repository against that baseline.
-
-This distinguishes changes introduced during the task from dirty files that were already present when ForgePilot started.
-
-Reports include:
+The v0.2 bounded repair loop remains active:
 
 ```text
-Changes since ForgePilot baseline: 3
-Added / modified / deleted: 1 / 2 / 0
-Unexpected changed files: 0
+failure evidence
+      ↓
+debugger
+      ↓
+small repair
+      ↓
+retry / re-verify
+      ↓
+PASS or repair budget exhausted
 ```
 
-### `git_diff` verification
+Use:
 
-A task can explicitly require that only approved paths change:
-
-```json
-{
-  "type": "git_diff",
-  "allowedPaths": [
-    "src/auth.js",
-    "test/auth.test.js"
-  ],
-  "maxChangedFiles": 2
-}
+```powershell
+--max-repairs 3
 ```
 
-If ForgePilot or a program it launches also modifies `package.json`, `README.md`, or another unapproved file, this verification fails.
+Resume a checkpointed task:
 
-Directory scopes are supported:
-
-```json
-{
-  "type": "git_diff",
-  "allowedPaths": ["src/**", "test/**"]
-}
+```powershell
+node src/cli.js run task.json --workspace .\repo --resume --max-repairs 3 --apply
 ```
 
-Tasks may also enable automatic change-scope enforcement:
+v0.4 checkpoints preserve test-first RED evidence and the protected-test snapshot as well as the original Git baseline.
 
-```json
-{
-  "enforceGitScope": true,
-  "expectedChangePaths": ["src/generated/**"]
-}
-```
+## Guarded actions
 
-File-writing actions are automatically included in the expected change set. `expectedChangePaths` is for additional files a build step or generator is expected to modify.
+Supported implementation/repair actions:
 
-Even when enforcement is disabled, ForgePilot records the Git change audit in its report.
+- `write_file`
+- `replace_text`
+- `run_command`
 
-## Guarded action model
-
-Supported actions in v0.3:
-
-### `write_file`
-
-```json
-{
-  "type": "write_file",
-  "path": "src/app.js",
-  "content": "console.log('hello');\n"
-}
-```
-
-### `replace_text`
-
-```json
-{
-  "type": "replace_text",
-  "path": "src/app.js",
-  "find": "oldValue",
-  "replace": "newValue",
-  "expectedOccurrences": 1
-}
-```
-
-The patch fails closed if the exact occurrence count does not match.
-
-### `run_command`
-
-```json
-{
-  "type": "run_command",
-  "command": "node",
-  "args": ["src/app.js"],
-  "expectExitCode": 0
-}
-```
-
-Commands execute with `shell: false`. Shell strings, pipes, redirection, and arbitrary executables are not accepted.
-
-Current executable allowlist:
+Commands use `spawn(..., shell: false)` and an executable allowlist:
 
 ```text
 node npm npx git python python3 pytest
-go java javac mvn gradle dotnet cargo rustc godot godot4
+ go java javac mvn gradle dotnet cargo rustc godot godot4
 ```
+
+The child environment also removes Node's parent test-harness control variable so a ForgePilot test run cannot accidentally inherit the harness state of ForgePilot's own tests.
 
 ## Independent verification
 
-Supported checks:
+Supported explicit checks:
 
 - `file_exists`
 - `file_contains`
 - `command`
 - `git_diff`
 
+v0.4 additionally injects internal `test_gate` and `test_integrity` checks for test-first tasks.
+
+The planner cannot mark a verifier check successful. Real file/process/Git evidence determines the result.
+
+## Ollama
+
 Example:
 
-```json
-{
-  "verify": [
-    { "type": "file_exists", "path": "src/app.js" },
-    { "type": "file_contains", "path": "src/app.js", "text": "fixed" },
-    {
-      "type": "command",
-      "command": "node",
-      "args": ["src/app.js"],
-      "expectExitCode": 0,
-      "stdoutIncludes": "PASS"
-    },
-    {
-      "type": "git_diff",
-      "allowedPaths": ["src/app.js"]
-    }
-  ]
-}
-```
-
-The verifier runs independently after implementation. A model saying "the fix worked" has no effect on the result.
-
-## Autonomous repair loop
-
-v0.2's repair engine remains intact:
-
-```text
-implement
-   |
-   v
-execute --------------------+
-   |                         |
-   | failure evidence        |
-   v                         |
-debugger                     |
-   |                         |
-   v                         |
-surgical repair              |
-   |                         |
-   +------> retry ------------+
-   |
-   v
-independent verification
-   |
-   +-- failure --> bounded repair
-   |
-   v
-PASS / FAIL with evidence
-```
-
-`--max-repairs` defaults to 2.
-
-Checkpoints are written to:
-
-```text
-.forgepilot/state/<task-id>.json
-```
-
-Resume a failed task:
-
 ```powershell
-node src/cli.js run task.json --workspace .\repo --resume --max-repairs 3 --apply
+node src/cli.js run examples/ollama-task.json `
+  --planner ollama `
+  --model qwen2.5-coder:7b `
+  --max-repairs 3 `
+  --apply
 ```
 
-The Git baseline is stored in the checkpoint so a resumed task still measures changes against the state that existed before the original run.
+The Ollama planner now receives repository testing metadata and understands the v0.4 test-first plan shape. It is instructed to author tests separately from implementation and not modify RED-proven tests during repair.
 
-## Repository analysis command
+## Reports
+
+Every applied run writes JSON and Markdown evidence under:
 
 ```text
-forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]
+.forgepilot/runs/<timestamp>/
 ```
 
-Example output:
+A v0.4 test-first report includes:
 
-```text
-ForgePilot v0.3.0 repository analysis
-Workspace: C:\code\sample
-Files: 184 (git)
-Context: ~3962/6000 tokens across 7 files
+- repository/project detection;
+- selected test inventory;
+- test-authoring actions;
+- RED command, result, and reason;
+- implementation and repair history;
+- GREEN/regression/build gate results;
+- test-integrity result;
+- coverage summary if available;
+- Git change attribution and unexpected files.
 
-Detected projects:
-  - node: TypeScript/JavaScript [React, Vite]
-
-Suggested commands:
-  - test: npm test
-  - build: npm run build
-
-Selected AI context:
-  - src/auth/session.ts (score 165)
-  - package.json (score 95)
-  - test/auth/session.test.ts (score 75)
-```
+Repository source excerpts used for planning remain transient and are not copied into normal reports.
 
 ## Safety model
 
-ForgePilot v0.3 is intentionally conservative:
+ForgePilot v0.4 is still intentionally conservative:
 
 - plan-only unless `--apply` is supplied;
-- workspace-relative paths cannot escape the selected workspace;
-- commands are invoked without a shell;
+- workspace path containment;
+- no shell command strings;
 - executable allowlist;
-- repair retries are bounded;
-- exact patch occurrence guard;
-- planner cannot mark verification successful;
-- source context is not persisted in normal run reports;
-- Git scope verification can reject unrelated changes.
+- bounded repairs;
+- exact patch occurrence guards;
+- test-only authoring phase;
+- false-green/wrong-RED protection;
+- immutable RED-proven tests;
+- independent verification;
+- optional Git scope enforcement.
 
-**Important:** v0.3 is not yet a hardened security sandbox. Allowed compilers/interpreters can execute repository code on the host. Disposable container/VM isolation is the v0.5 milestone.
-
-## Architecture
-
-```text
-Goal / Task
-    |
-    v
-Repository Intelligence
-    |-- ignore-aware scanner
-    |-- project detector
-    |-- build/test hints
-    |-- context ranker + token budget
-    |
-    v
-Planner (scripted / Ollama)
-    |
-    v
-Guarded Executor
-    |
-    +---- failure evidence ----> Debugger
-    |                              |
-    |                         bounded repair
-    |                              |
-    +<--------- retry -------------+
-    |
-    v
-Independent Verifier
-    |-- files
-    |-- commands
-    |-- Git change scope
-    |
-    v
-Evidence Report + Checkpoint
-```
-
-See `docs/ARCHITECTURE.md` and `docs/REPOSITORY_INTELLIGENCE.md` for details.
+**Important:** v0.4 is not a hardened security sandbox. Allowed interpreters, compilers, test runners, and repository code still execute on the host. Disposable Docker/Podman isolation is the v0.5 milestone.
 
 ## Roadmap
 
-- **v0.1** — guarded local execution ✅
-- **v0.2** — bounded autonomous repair ✅
-- **v0.3** — repository intelligence ✅
-- **v0.4** — test-first engineering agent
-- **v0.5** — disposable Docker/Podman sandboxes
-- **v0.6** — screenshot and visual verification
-- **v0.7** — planner / implementer / debugger / reviewer / verifier roles
-- **v0.8** — IDE/browser computer-use driver
-- **v0.9** — Windows UI, installer, model profiles, security hardening
-- **v1.0** — evidence-backed autonomous software engineer
-
-## Tests
-
-```powershell
-npm test
-```
-
-v0.3.0 release validation: **18 tests passed, 0 failed**.
-
-See `docs/VALIDATION.md`.
-
-## License
-
-MIT
+- **v0.1** guarded execution ✅
+- **v0.2** bounded autonomous repair ✅
+- **v0.3** repository intelligence ✅
+- **v0.4** test-first engineering ✅
+- **v0.5** disposable sandbox providers
+- **v0.6** screenshot / visual verification
+- **v0.7** multi-agent roles
+- **v0.8** IDE/browser computer use
+- **v0.9** UI/installer/security hardening
+- **v1.0** verified autonomous software engineer

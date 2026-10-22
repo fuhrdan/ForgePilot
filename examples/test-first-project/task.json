@@ -1,0 +1,36 @@
+{
+  "goal": "Fix add(a, b) and prove the bug with a regression test before changing the implementation.",
+  "testFirst": {
+    "testActions": [
+      {
+        "type": "write_file",
+        "path": "test/math.test.js",
+        "content": "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { add } from \"../src/math.js\";\n\ntest(\"add returns the arithmetic sum\", () => {\n    assert.equal(add(2, 3), 5);\n});\n"
+      }
+    ],
+    "red": {
+      "command": "node",
+      "args": ["--test", "test/math.test.js"],
+      "failureIncludes": "Expected values to be strictly equal"
+    },
+    "green": {
+      "command": "node",
+      "args": ["--test", "test/math.test.js"]
+    }
+  },
+  "actions": [
+    {
+      "type": "replace_text",
+      "path": "src/math.js",
+      "find": "return 0;",
+      "replace": "return a + b;"
+    }
+  ],
+  "verify": [
+    {
+      "type": "file_contains",
+      "path": "src/math.js",
+      "text": "return a + b;"
+    }
+  ]
+}

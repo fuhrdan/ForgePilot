@@ -1,85 +1,61 @@
-# v0.3 Validation
+# ForgePilot v0.4 Validation
 
-Validated in the build environment on 2026-10-22 with Node.js v22.x.
+Validated in the build environment on 2026-10-22 with Node.js 22.
 
-## Automated tests
+## Automated suite
 
 ```bash
 npm test
 ```
 
-Release result: **18 passed, 0 failed**.
+Release-candidate result: **26 passed, 0 failed**.
 
-The original v0.1/v0.2 regression tests remain and cover:
+The v0.1–v0.3 regressions remain green and cover workspace containment, allowlisted execution, Ollama plan parsing, surgical patches, repair/retry, checkpoints/resume, repository detection/context, and Git-diff verification.
 
-- workspace path containment;
-- plan-only behavior;
-- guarded file writes;
-- shell/executable blocking;
-- Ollama structured-plan parsing;
-- exact `replace_text` patches;
-- ambiguous-patch failure;
-- real process failure → repair → retry;
-- verification-triggered repair;
-- repair-budget enforcement;
-- checkpoint resume.
+v0.4 adds tests proving:
 
-v0.3 adds tests proving:
+1. Test inventory and goal-aware targeted Node test selection.
+2. A valid RED → implementation → GREEN → regression → build lifecycle.
+3. A test that is already green blocks implementation.
+4. A test that fails for the wrong expected reason blocks implementation.
+5. A missing/blocked runner does not count as RED.
+6. Implementation cannot edit a RED-proven test.
+7. GREEN failure can enter bounded repair while protected tests remain unchanged.
+8. LCOV summaries are ingested from real artifacts.
 
-1. Filesystem scanning honors root `.gitignore` and built-in generated-directory exclusions.
-2. Git-backed scanning delegates ignore behavior to Git.
-3. Node/TypeScript/framework detection and build/test hints work.
-4. Goal-relevant source is selected within the requested context budget.
-5. Git baseline comparison separates expected from unexpected changed files.
-6. `git_diff` verification fails on an unrelated repository change.
+## Command-environment regression
 
-## Repository-analysis smoke test
+During development, nested `node --test` processes inherited Node's parent `NODE_TEST_CONTEXT` test-harness variable. That could make repository test execution behave differently while ForgePilot itself was under test. `runCommand` now removes that internal parent-harness variable from child execution environments. The test-first suite then passed under the real `npm test` runner.
 
-```bash
-node src/cli.js analyze . \
-  --goal "improve repository intelligence and git diff verification" \
-  --max-context-tokens 1200
-```
+## Release acceptance
 
-Observed result:
+Before packaging, the release is required to pass:
 
-```text
-ForgePilot v0.3.0 repository analysis
-Files: 32 (filesystem)
-Context: ~1200/1200 tokens across 3 files
-Detected projects:
-  - node: JavaScript
-Suggested commands:
-  - test: npm test
-Selected AI context:
-  - src/repository/git-diff.js
-  - package.json
-  - README.md
-```
+- all automated tests;
+- syntax checks for every `.js` source/test file;
+- CLI `--version` check;
+- repository `analyze` smoke test;
+- end-to-end test-first CLI smoke test in a temporary Git repository;
+- clean ZIP extraction followed by another full `npm test` run.
 
-This verifies the user-facing analyzer and demonstrates goal-sensitive ranking rather than README-only context selection.
+## End-to-end CLI smoke test
 
-
-## End-to-end Git-scope smoke test
-
-A temporary Git repository was initialized with a committed `app.js`. ForgePilot captured the baseline, patched only `app.js`, executed it, reran it through independent verification, and enforced both an explicit `git_diff` check and task-level `enforceGitScope`.
+A clean copy of `examples/test-first-project` was initialized as a Git repository, committed, and its task was run through the public CLI with `enforceGitScope=true`.
 
 Observed result:
 
 ```text
 Result: PASS
-changedFiles:
-  app.js (modified)
-unexpectedFiles: 0
+RED: PASS (expected failure signature matched)
+GREEN: PASS
+REGRESSION: PASS
+BUILD: PASS
+Git scope: PASS
+Test integrity: PASS
+Changed files:
+  modified src/math.js
+  added    test/math.test.js
+Unexpected changed files: 0
 ```
 
-The first smoke-test attempt exposed an internal-artifact attribution bug: `.forgepilot/state/...` was being seen by Git's untracked-file listing. v0.3 was corrected to apply ForgePilot's built-in internal/generated exclusions to the Git-backed scanner as well. The fixed path is covered by the Git scanner test and the repeated CLI smoke test passed.
-
-## Release acceptance criteria
-
-- Existing repair workflow remains green.
-- Repository analysis does not modify source files.
-- Planner context can contain source excerpts but persistent reports do not.
-- Explicit Git change-scope verification is independently evaluated.
-- Pre-task Git baseline is checkpointed for resume.
-- No npm runtime dependencies were added.
+The Markdown report independently recorded the RED evidence, engineering gates, Git attribution, and immutable-test check.

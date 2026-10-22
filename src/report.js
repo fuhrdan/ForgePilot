@@ -46,6 +46,18 @@ function renderMarkdown(report) {
         lines.push("");
     }
 
+
+    if (report.testFirst?.enabled) {
+        lines.push("## Test-First Evidence", "");
+        lines.push(`- Test authoring actions: ${report.testFirst.authoring?.length ?? 0}`);
+        lines.push(`- RED gate: **${report.testFirst.red?.validRed ? "PASS" : "FAIL"}**`);
+        if (report.testFirst.red?.reason) lines.push(`- RED evidence: ${report.testFirst.red.reason}`);
+        if (report.testFirst.red?.command) lines.push(`- RED command: \`${report.testFirst.red.command} ${(report.testFirst.red.args ?? []).join(" ")}\``);
+        if (report.testFirst.selectedTests?.length) lines.push(`- Selected tests: ${report.testFirst.selectedTests.map((item) => `\`${item}\``).join(", ")}`);
+        if (report.testFirst.testOnlyDiff?.available) lines.push(`- Test-only changes before implementation: ${report.testFirst.testOnlyDiff.changedFiles?.length ?? 0}`);
+        lines.push("");
+    }
+
     lines.push("## Actions", "");
     for (const action of report.actions) {
         const phase = action.phase ? ` (${action.phase}${action.attempt ? ` #${action.attempt}` : ""})` : "";
@@ -70,8 +82,18 @@ function renderMarkdown(report) {
     if (report.verification.skipped) lines.push(`Reason: ${report.verification.skipped}`);
 
     for (const check of report.verification.checks) {
-        lines.push(`- ${check.index + 1}. ${check.type}: **${check.status}**`);
+        const phase = check.phase ? ` [${check.phase}]` : "";
+        lines.push(`- ${check.index + 1}. ${check.type}${phase}: **${check.status}**`);
     }
+
+    lines.push("", "## Coverage", "");
+    if (report.coverage?.available) {
+        lines.push(`- Source: \`${report.coverage.path}\` (${report.coverage.format})`);
+        for (const metric of ["lines", "functions", "branches", "statements"]) {
+            const value = report.coverage[metric];
+            if (value && value.total > 0) lines.push(`- ${metric}: ${value.covered}/${value.total} (${value.pct}%)`);
+        }
+    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.4.");
 
     lines.push("", "## Git", "");
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);

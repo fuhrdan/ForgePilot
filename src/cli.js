@@ -10,7 +10,7 @@ import { runTaskWithRepairs } from "./orchestration/repair-loop.js";
 import { writeReport } from "./report.js";
 import { buildRepositoryContext } from "./repository/context.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -90,6 +90,14 @@ function repositoryReportSummary(repository) {
         projects: repository.projects,
         commandHints: repository.commandHints,
         budget: repository.budget,
+        testing: repository.testing ? {
+            testFileCount: repository.testing.testFileCount,
+            selectedTests: repository.testing.selectedTests,
+            primaryTestCommand: repository.testing.primaryTestCommand,
+            targetedTestCommand: repository.testing.targetedTestCommand,
+            regressionCommand: repository.testing.regressionCommand,
+            buildCommands: repository.testing.buildCommands
+        } : null,
         selectedFiles: (repository.selectedFiles ?? []).map(({ path, score }) => ({ path, score }))
     };
 }
@@ -152,7 +160,9 @@ async function runTask(taskFile, options) {
         maxRepairs,
         resumed: outcome.resumed,
         verification: outcome.verification,
-        repository: repositoryReportSummary(outcome.repository)
+        repository: repositoryReportSummary(outcome.repository),
+        testFirst: outcome.testFirst,
+        coverage: outcome.coverage
     };
 
     const artifacts = await writeReport(workspace, report);
@@ -187,6 +197,12 @@ async function analyzeRepository(workspaceArg, options) {
     console.log("\nSuggested commands:");
     if (!repository.commandHints.length) console.log("  (none)");
     for (const hint of repository.commandHints) console.log(`  - ${hint.kind}: ${hint.command} ${(hint.args ?? []).join(" ")}`.trimEnd());
+
+    console.log("\nTesting:");
+    console.log(`  - Test files: ${repository.testing?.testFileCount ?? 0}`);
+    console.log(`  - Selected tests: ${(repository.testing?.selectedTests ?? []).join(", ") || "(none)"}`);
+    if (repository.testing?.targetedTestCommand) console.log(`  - Targeted gate: ${repository.testing.targetedTestCommand.command} ${(repository.testing.targetedTestCommand.args ?? []).join(" ")}`.trimEnd());
+    if (repository.testing?.primaryTestCommand) console.log(`  - Regression gate: ${repository.testing.primaryTestCommand.command} ${(repository.testing.primaryTestCommand.args ?? []).join(" ")}`.trimEnd());
 
     console.log("\nSelected AI context:");
     if (!repository.selectedFiles.length) console.log("  (none)");

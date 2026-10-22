@@ -1,43 +1,28 @@
 # ForgePilot Roadmap: v0.1 → v1.0
 
 ## v0.1 — Guarded local execution ✅
-- Node 22 CLI.
-- Scripted and Ollama planners.
-- Workspace-constrained file writes.
-- Shell-free, executable-allowlisted command execution.
-- Plan-only default; explicit `--apply` required.
-- Independent file/command verification.
-- Git status capture.
-- JSON + Markdown run reports.
-- Doctor and clone commands.
+- Node 22 CLI, Scripted/Ollama planners, guarded workspace actions.
+- Shell-free allowlisted command execution.
+- Independent verification and evidence reports.
 
 ## v0.2 — Autonomous repair loop ✅
-- Feed failed action/test output back to the planner.
-- Repair independent-verification failures.
-- Bounded retry budget.
-- Patch-oriented `replace_text` edits with ambiguity guard.
-- Run history with explicit failure/repair/retry evidence.
-- Per-task checkpoints and `--resume`.
+- Failure evidence → bounded repair → retry.
+- Surgical `replace_text`, checkpoints, and `--resume`.
 
-## v0.3 — Repository intelligence ✅ (this release)
-- Git-native and `.gitignore`-aware repository scanning.
-- Project/language/framework detection.
-- Read selected source files for planning context.
-- Goal-aware, token-budgeted context builder.
-- Automatic build/test/lint command hints.
-- Git baseline fingerprinting.
-- Git diff verifier and human-readable change summary.
-- Unexpected-file detection and optional enforced change scope.
-- Repository analysis CLI.
+## v0.3 — Repository intelligence ✅
+- Ignore-aware scanning and project/framework detection.
+- Goal-aware source context and build/test hints.
+- Git baseline/diff attribution and scope verification.
 
-## v0.4 — Test-first agent
-- Automatic test-command discovery promoted from hints to executable test gates.
-- Existing-test inventory and targeted test selection.
-- Test authoring mode with explicit test-change policy.
-- Red/green evidence: prove the new test fails before implementation where practical.
-- Coverage ingestion where available.
-- Build/test gates required before success.
-- Regression-test selection based on changed code.
+## v0.4 — Test-first engineering agent ✅ (this release)
+- Test inventory and goal/source-aware targeted selection.
+- Executable test/build gates derived from repository metadata.
+- Test-only authoring phase before implementation.
+- RED gate with false-green, infrastructure-failure, and expected-failure-signature checks.
+- RED-proven test immutability through implementation/repair.
+- GREEN, regression, and build gates before success.
+- Gate failures enter the bounded repair loop.
+- LCOV / coverage-summary ingestion when available.
 
 ## v0.5 — Disposable sandboxes
 - Docker/Podman sandbox provider.
@@ -48,30 +33,23 @@
 
 ## v0.6 — Visual application verification
 - Launch desktop/web applications.
-- Screenshot capture.
-- Vision-provider abstraction.
-- Visual assertions and regression snapshots.
-- Basic UI interaction evidence.
+- Screenshot capture and vision-provider abstraction.
+- Visual assertions, regression snapshots, and basic UI interaction evidence.
 
 ## v0.7 — Multi-agent roles
 - Planner, Implementer, Debugger, Reviewer, Verifier.
 - Evidence exchange rather than free-form agent chat.
 - Reviewer can reject a patch but cannot silently modify it.
-- Independent verifier cannot modify the workspace.
 
 ## v0.8 — IDE / browser computer use
 - Computer-use driver abstraction.
 - VS Code/browser automation.
-- Mouse/keyboard workflows when CLI tooling is insufficient.
-- Recorded interaction trace.
+- Mouse/keyboard workflows and recorded interaction trace.
 
 ## v0.9 — Product hardening
-- Windows installer.
-- Local web dashboard.
-- Model profiles and hardware-aware model selection.
-- Secrets store and permission controls.
-- Signed run manifests / provenance.
-- Crash recovery and task queue.
+- Windows installer and local web dashboard.
+- Model profiles/hardware-aware selection.
+- Secrets/permission controls, signed provenance, crash recovery, task queue.
 
 ## v1.0 — Verified autonomous software engineering
-A task can be given as a goal plus repository. ForgePilot understands the repository, plans a bounded change, edits, builds, tests, launches when appropriate, visually/behaviorally verifies the result, repairs failures, and returns evidence-backed artifacts plus an attributable Git diff. Destructive/network actions remain permission-gated and success claims are backed by verifier evidence.
+A task can be given as a goal plus repository. ForgePilot understands the repository, proves a regression where practical, implements a bounded change, builds, tests, launches when appropriate, visually/behaviorally verifies the result, repairs failures, and returns evidence-backed artifacts plus an attributable Git diff. Destructive/network actions remain permission-gated and success claims are backed by verifier evidence.

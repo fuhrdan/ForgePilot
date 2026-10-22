@@ -1,52 +1,33 @@
 # Changelog
 
-## v0.3.0 — Repository Intelligence
+## 0.4.0 — 2026-10-22
 
 ### Added
-
-- Git-backed repository scanner using `git ls-files -co --exclude-standard`.
-- `.gitignore`-aware filesystem fallback scanner for non-Git workspaces.
-- Detection for Node/TypeScript, common Node frameworks, .NET, Maven/Gradle, Python, Go, Rust, Godot, C, and C++.
-- Automatic build/test/lint command hints based on repository structure and package scripts.
-- Goal-aware source-file ranking.
-- Approximate token-budgeted source context for AI planners.
-- `forgepilot analyze` command.
-- Git baseline fingerprints captured before task execution.
-- Human-readable added/modified/deleted change summary.
-- Expected-vs-unexpected file classification.
-- `git_diff` independent verification check.
-- Optional `enforceGitScope` task-level verification.
-- `expectedChangePaths` for generator/build side effects.
-- Godot/Godot4 added to the executable allowlist and doctor probes.
-- Six repository-intelligence tests, bringing the release suite to 18 tests.
+- Test-first AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD workflow.
+- Repository test-file inventory and targeted test ranking.
+- Direct targeted gates for Node `node --test` and Python `pytest` where safely derivable.
+- RED failure-signature checks (`failureIncludes`, `stdoutIncludes`, `stderrIncludes`).
+- False-green and test-infrastructure failure protection.
+- Test-only authoring policy and RED-proven test immutability.
+- GREEN/regression/build gates integrated with bounded repair.
+- LCOV and coverage-summary ingestion.
+- Test-first demo project and dedicated documentation.
 
 ### Changed
+- Repository analysis now exposes testing inventory and executable gates.
+- Ollama planner prompt understands test-first plans and immutable RED-proven tests.
+- Git expected-path calculation includes test-authoring changes.
+- Child command environment strips Node's parent test-harness control variable before repository test execution.
+- Checkpoint schema advances to v4 for test-first evidence/snapshots.
 
-- Ollama planning and repair prompts now receive selected repository source context, project metadata, and build/test hints instead of only a filename list.
-- Repair checkpoints now persist the original Git baseline, preserving accurate change attribution across `--resume`.
-- Markdown reports include repository detection and Git change summaries.
+### Validation
+- 26 automated tests passing, including all v0.1–v0.3 regressions.
 
-### Privacy / safety
+## 0.3.0 — 2026-10-22
+- Repository intelligence, token-budgeted context, project detection, Git baseline/diff verification.
 
-- Source excerpts used for planner context are transient and are stripped from persistent run reports.
-- `git_diff` verification fails closed if the fingerprint scan is known to be incomplete.
-- Existing plan-only default, workspace path guard, shell-free execution, executable allowlist, patch occurrence guard, and bounded repair budget remain in force.
+## 0.2.0 — 2026-10-22
+- Bounded autonomous repair loop, surgical patches, checkpoints and resume.
 
-## v0.2.0 — Autonomous Repair Loop
-
-- Evidence-driven bounded repair loop.
-- `replace_text` surgical patch action.
-- Verification-failure repair.
-- Persistent checkpoints and `--resume`.
-- Explicit failure/repair/retry evidence in reports.
-- 12 passing tests.
-
-## v0.1.0 — Guarded Execution
-
-- Node 22 CLI.
-- Scripted and Ollama planners.
-- Guarded workspace file operations.
-- Allowlisted shell-free command execution.
-- Independent verification.
-- Git status capture and evidence reports.
-- 6 passing tests.
+## 0.1.0 — 2026-10-22
+- Guarded local execution, Scripted/Ollama planning, and independent verification.

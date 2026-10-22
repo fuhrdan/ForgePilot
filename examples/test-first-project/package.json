@@ -1,0 +1,9 @@
+{
+  "name": "forgepilot-test-first-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build": "node --check src/math.js"
+  }
+}

@@ -18,6 +18,9 @@ function expectedPathsFromPlan(plan, extras = []) {
     for (const action of plan.actions ?? []) {
         if (["write_file", "replace_text"].includes(action.type) && action.path) paths.push(action.path);
     }
+    for (const action of plan.testFirst?.testActions ?? []) {
+        if (["write_file", "replace_text"].includes(action.type) && action.path) paths.push(action.path);
+    }
     return [...new Set(paths.map(String))];
 }
 
@@ -59,7 +62,7 @@ export async function verifyPlan(plan, workspace, {
             continue;
         }
 
-        if (check.type === "command") {
+        if (check.type === "command" || check.type === "test_gate") {
             const cwd = resolveInside(workspace, check.cwd ?? ".");
             const result = await runCommand({
                 command: check.command,
@@ -74,6 +77,7 @@ export async function verifyPlan(plan, workspace, {
             checks.push({
                 index,
                 type: check.type,
+                phase: check.phase,
                 status: exitOkay && stdoutOkay && stderrOkay ? "passed" : "failed",
                 ...result,
                 expectedExit,
