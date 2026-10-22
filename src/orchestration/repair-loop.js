@@ -35,7 +35,7 @@ async function contextFor(workspace, task) {
     };
 }
 
-async function executeRepairActions(repairPlan, workspace, apply, protectedPaths = []) {
+async function executeRepairActions(repairPlan, workspace, apply, protectedPaths = [], executionProvider = null) {
     const results = [];
     for (let index = 0; index < repairPlan.actions.length; index++) {
         const action = repairPlan.actions[index];
@@ -49,24 +49,25 @@ async function executeRepairActions(repairPlan, workspace, apply, protectedPaths
             });
             break;
         }
-        const result = await executeAction(action, workspace, { apply, index });
+        const result = await executeAction(action, workspace, { apply, index, executionProvider });
         results.push(result);
         if (result.status === "failed") break;
     }
     return results;
 }
 
-function verificationOptions(task, gitBaseline) {
+function verificationOptions(task, gitBaseline, executionProvider = null) {
     return {
         apply: true,
         gitBaseline,
         expectedChangePaths: Array.isArray(task.expectedChangePaths) ? task.expectedChangePaths : [],
-        enforceGitScope: task.enforceGitScope === true
+        enforceGitScope: task.enforceGitScope === true,
+        executionProvider
     };
 }
 
-async function verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot) {
-    const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline));
+async function verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider = null) {
+    const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline, executionProvider));
     if (testSnapshot) {
         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
         verification.checks.push({
@@ -100,7 +101,8 @@ export async function runTaskWithRepairs({
     apply = false,
     maxRepairs = 2,
     taskId,
-    resumeState = null
+    resumeState = null,
+    executionProvider = null
 }) {
     const initialContext = await contextFor(workspace, task);
     const planned = resumeState?.plan ?? await planner.plan(task, initialContext);
@@ -119,12 +121,13 @@ export async function runTaskWithRepairs({
     const gitBaseline = resumeState?.gitBaseline ?? await captureGitBaseline(workspace);
 
     if (!apply) {
-        const testAuthoring = testFirst ? await executeTestAuthoring(testFirst, workspace, { apply: false }) : [];
-        const actions = await executePlan(plan, workspace, { apply: false });
+        const testAuthoring = testFirst ? await executeTestAuthoring(testFirst, workspace, { apply: false, executionProvider }) : [];
+        const actions = await executePlan(plan, workspace, { apply: false, executionProvider });
         const verification = await verifyPlan(plan, workspace, {
             apply: false,
             gitBaseline,
-            expectedChangePaths: task.expectedChangePaths ?? []
+            expectedChangePaths: task.expectedChangePaths ?? [],
+            executionProvider
         });
         return {
             plan, actions, verification, repairs: [], repairCount: 0, resumed: false,
@@ -161,7 +164,7 @@ export async function runTaskWithRepairs({
     let protectedPaths = testFirst ? protectedTestPaths(testFirst) : [];
 
     if (testFirst && !testFirstEvidence?.red?.validRed) {
-        const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true });
+        const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true, executionProvider });
         if (authoring.some((item) => item.status === "failed")) {
             const verification = await earlyFailure({
                 workspace, gitBaseline, task,
@@ -185,7 +188,7 @@ export async function runTaskWithRepairs({
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
-        const red = await runRedGate(workspace, testFirst.red);
+        const red = await runRedGate(workspace, testFirst.red, executionProvider);
         testFirstEvidence = { enabled: true, authoring, testOnlyDiff, red, selectedTests: testFirst.selectedTests };
         if (!red.validRed) {
             const verification = await earlyFailure({
@@ -213,7 +216,7 @@ export async function runTaskWithRepairs({
         if (actionTouchesProtectedTest(action, protectedPaths)) {
             result = { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a RED-proven test." };
         } else {
-            result = await executeAction(action, workspace, { apply: true, index: actionIndex });
+            result = await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider });
         }
         actions.push({ ...result, phase: "main", attempt: 0 });
 
@@ -232,7 +235,7 @@ export async function runTaskWithRepairs({
             while (repairCount < maxRepairs) {
                 repairCount++;
                 const repairPlan = await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
-                const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths);
+                const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider);
                 const repairActionsPassed = repairResults.every((item) => item.status === "passed");
                 const repairRecord = {
                     attempt: repairCount,
@@ -246,7 +249,7 @@ export async function runTaskWithRepairs({
                 if (repairActionsPassed && repairPlan.actions.length > 0) {
                     result = actionTouchesProtectedTest(action, protectedPaths)
                         ? { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a RED-proven test." }
-                        : await executeAction(action, workspace, { apply: true, index: actionIndex });
+                        : await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider });
                     if (result.status === "passed" && testSnapshot) {
                         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
                         if (!integrity.passed) result = { index: actionIndex, type: "test_integrity", status: "failed", changedTestFiles: integrity.changed };
@@ -280,12 +283,12 @@ export async function runTaskWithRepairs({
         state = await saveState(workspace, { ...state, actionIndex: actionIndex + 1, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, lastFailure: null });
     }
 
-    let verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot);
+    let verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider);
     while (!verification.passed && repairCount < maxRepairs) {
         repairCount++;
         const evidence = { kind: "verification", failedChecks: failedChecks(verification) };
         const repairPlan = await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
-        const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths);
+        const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider);
         const repairRecord = {
             attempt: repairCount,
             trigger: evidence,
@@ -297,7 +300,7 @@ export async function runTaskWithRepairs({
         repairs.push(repairRecord);
 
         if (repairResults.every((item) => item.status === "passed") && repairPlan.actions.length > 0) {
-            verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot);
+            verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider);
             repairRecord.retry = { passed: verification.passed, failedChecks: failedChecks(verification) };
         }
 

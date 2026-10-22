@@ -47,7 +47,7 @@ The configured token budget is approximate (`characters / 4`) because v0.3 delib
 
 Hints are deterministic recommendations, not automatic execution. Examples include package scripts, `dotnet build`, `pytest`, `go test ./...`, and `cargo test`.
 
-v0.4 will promote this information into a test-first execution policy with discovered test gates.
+v0.4 promoted this information into a test-first execution policy with discovered test gates; v0.5 can run those gates through the sandbox execution provider.
 
 ## Git baseline and diff
 

@@ -4,7 +4,7 @@ import { resolveInside } from "../core/paths.js";
 import { runCommand } from "../core/command.js";
 import { ForgePilotError } from "../core/errors.js";
 
-export async function executeAction(action, workspace, { apply = false, index = 0 } = {}) {
+export async function executeAction(action, workspace, { apply = false, index = 0, executionProvider = null } = {}) {
     if (!apply) return { index, type: action.type, status: "planned", action };
 
     if (action.type === "write_file") {
@@ -40,7 +40,8 @@ export async function executeAction(action, workspace, { apply = false, index = 
 
     if (action.type === "run_command") {
         const cwd = resolveInside(workspace, action.cwd ?? ".");
-        const result = await runCommand({
+        const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
+        const result = await runner({
             command: action.command,
             args: Array.isArray(action.args) ? action.args.map(String) : [],
             cwd,
@@ -54,10 +55,10 @@ export async function executeAction(action, workspace, { apply = false, index = 
     throw new ForgePilotError(`Unsupported action type: ${action.type}`, "UNSUPPORTED_ACTION");
 }
 
-export async function executePlan(plan, workspace, { apply = false } = {}) {
+export async function executePlan(plan, workspace, { apply = false, executionProvider = null } = {}) {
     const results = [];
     for (let index = 0; index < plan.actions.length; index++) {
-        const result = await executeAction(plan.actions[index], workspace, { apply, index });
+        const result = await executeAction(plan.actions[index], workspace, { apply, index, executionProvider });
         results.push(result);
         if (result.status === "failed") break;
     }

@@ -9,8 +9,10 @@ import { createTaskId, loadState } from "./core/state.js";
 import { runTaskWithRepairs } from "./orchestration/repair-loop.js";
 import { writeReport } from "./report.js";
 import { buildRepositoryContext } from "./repository/context.js";
+import { createExecutionProvider, detectContainerRuntime, HostExecutionProvider } from "./sandbox/provider.js";
+import { createSandboxSession } from "./sandbox/session.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -19,9 +21,12 @@ function usage() {
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--max-repairs N] [--resume] [--apply]\n\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--max-repairs N] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
+`Sandbox (v0.5):\n` +
+`  --sandbox runs build/test commands inside Docker/Podman against a disposable repository copy.\n` +
+`  Network defaults to none; CPU/RAM/PID limits are enforced; verified changes are promoted on PASS only.\n\n` +
 `Repair loop:\n` +
 `  Failed actions and verification checks can trigger bounded evidence-driven repairs.\n` +
 `  --max-repairs defaults to 2. --resume continues from the task checkpoint.\n\n` +
@@ -34,7 +39,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume"]);
+    const flags = new Set(["apply", "resume", "sandbox", "sandbox-keep"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -51,7 +56,7 @@ function parseOptions(args) {
 }
 
 async function doctor() {
-    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4"];
+    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "docker", "podman"];
     console.log(`ForgePilot v${VERSION} doctor\n`);
     for (const tool of tools) {
         const found = await commandExists(tool);
@@ -59,6 +64,8 @@ async function doctor() {
     }
     console.log(`\nNode runtime: ${process.version}`);
     console.log(`Platform: ${process.platform} ${process.arch}`);
+    const sandboxRuntime = await detectContainerRuntime("auto");
+    console.log(`Sandbox runtime: ${sandboxRuntime.available ? sandboxRuntime.runtime : "unavailable"}`);
 }
 
 async function cloneRepository(url, workspace) {
@@ -105,8 +112,8 @@ function repositoryReportSummary(repository) {
 async function runTask(taskFile, options) {
     const taskPath = path.resolve(taskFile);
     const task = JSON.parse(await fs.readFile(taskPath, "utf8"));
-    const workspace = await ensureWorkspace(options.workspace ?? task.workspace ?? path.dirname(taskPath));
-    await initializeWorkspace(workspace);
+    const originalWorkspace = await ensureWorkspace(options.workspace ?? task.workspace ?? path.dirname(taskPath));
+    await initializeWorkspace(originalWorkspace);
 
     const plannerName = options.planner ?? task.planner ?? "scripted";
     const planner = buildPlanner(plannerName, task, options);
@@ -114,63 +121,112 @@ async function runTask(taskFile, options) {
     const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? 2));
     if (!Number.isFinite(maxRepairs)) throw new Error("--max-repairs must be a number.");
 
+    const rawSandbox = task.sandbox === true ? {} : (task.sandbox && typeof task.sandbox === "object" ? task.sandbox : {});
+    const sandboxEnabled = Boolean(options.sandbox || task.sandbox === true || rawSandbox.enabled === true);
+    if (sandboxEnabled && options.resume) throw new Error("Sandbox resume is not supported in v0.5; rerun the task in a fresh disposable sandbox or use host mode with --resume.");
+
+    let sandboxSession = null;
+    let workingWorkspace = originalWorkspace;
+    let executionProvider = new HostExecutionProvider();
+    let sandboxInfo = { enabled: sandboxEnabled, provider: executionProvider.describe(), promoted: false, promotedChanges: [], artifacts: [] };
+
+    if (sandboxEnabled && options.apply) {
+        sandboxSession = await createSandboxSession(originalWorkspace, {
+            taskId,
+            keep: Boolean(options["sandbox-keep"] || rawSandbox.keep)
+        });
+        workingWorkspace = sandboxSession.workspace;
+        executionProvider = await createExecutionProvider({
+            enabled: true,
+            runtime: options["sandbox-runtime"] ?? rawSandbox.runtime ?? "auto",
+            workspaceRoot: workingWorkspace,
+            image: options["sandbox-image"] ?? rawSandbox.image ?? "node:22-bookworm",
+            network: rawSandbox.network ?? "none",
+            cpus: rawSandbox.cpus ?? "2",
+            memory: rawSandbox.memory ?? "2g",
+            pidsLimit: rawSandbox.pidsLimit ?? 256,
+            pullPolicy: rawSandbox.pullPolicy ?? "never"
+        });
+        sandboxInfo.provider = executionProvider.describe();
+        sandboxInfo.workspace = workingWorkspace;
+    }
+
     let resumeState = null;
     if (options.resume) {
-        resumeState = await loadState(workspace, taskId);
+        resumeState = await loadState(originalWorkspace, taskId);
         if (!resumeState) throw new Error(`No checkpoint exists for task ${taskId}.`);
     }
 
     console.log(`ForgePilot v${VERSION}`);
     console.log(`Goal: ${task.goal ?? "(no goal supplied)"}`);
-    console.log(`Workspace: ${workspace}`);
+    console.log(`Workspace: ${originalWorkspace}`);
     console.log(`Planner: ${plannerName}`);
     console.log(`Repair budget: ${maxRepairs}`);
+    if (sandboxEnabled) console.log(`Sandbox: ${options.apply ? `${sandboxInfo.provider.runtime ?? "planned"} / ${sandboxInfo.provider.image ?? rawSandbox.image ?? "node:22-bookworm"}` : "planned"}`);
     console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}${options.resume ? " / RESUME" : ""}\n`);
 
-    const outcome = await runTaskWithRepairs({
-        task,
-        planner,
-        plannerName,
-        workspace,
-        apply: Boolean(options.apply),
-        maxRepairs,
-        taskId,
-        resumeState
-    });
+    let outcome;
+    let status = "FAIL";
+    try {
+        outcome = await runTaskWithRepairs({
+            task,
+            planner,
+            plannerName,
+            workspace: workingWorkspace,
+            apply: Boolean(options.apply),
+            maxRepairs,
+            taskId,
+            resumeState,
+            executionProvider
+        });
 
-    console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
-    console.log(`Actions: ${outcome.plan.actions.length}; verification checks: ${outcome.plan.verify.length}`);
-    if (outcome.repairCount > 0) console.log(`Repair attempts used: ${outcome.repairCount}/${maxRepairs}`);
-    console.log("");
+        console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
+        console.log(`Actions: ${outcome.plan.actions.length}; verification checks: ${outcome.plan.verify.length}`);
+        if (outcome.repairCount > 0) console.log(`Repair attempts used: ${outcome.repairCount}/${maxRepairs}`);
+        console.log("");
 
-    const actionFailure = outcome.actions.some((item) => item.status === "failed") && !outcome.verification.passed;
-    const status = !options.apply ? "PLANNED" : (!actionFailure && outcome.verification.passed ? "PASS" : "FAIL");
-    const report = {
-        version: VERSION,
-        createdAt: new Date().toISOString(),
-        taskId,
-        goal: outcome.plan.goal ?? task.goal,
-        planner: plannerName,
-        apply: Boolean(options.apply),
-        status,
-        plan: outcome.plan,
-        actions: outcome.actions,
-        repairs: outcome.repairs,
-        repairCount: outcome.repairCount,
-        maxRepairs,
-        resumed: outcome.resumed,
-        verification: outcome.verification,
-        repository: repositoryReportSummary(outcome.repository),
-        testFirst: outcome.testFirst,
-        coverage: outcome.coverage
-    };
+        const actionFailure = outcome.actions.some((item) => item.status === "failed") && !outcome.verification.passed;
+        status = !options.apply ? "PLANNED" : (!actionFailure && outcome.verification.passed ? "PASS" : "FAIL");
 
-    const artifacts = await writeReport(workspace, report);
-    console.log(`Result: ${status}`);
-    console.log(`Report: ${artifacts.markdownPath}`);
-    console.log(`JSON:   ${artifacts.jsonPath}`);
+        if (sandboxSession) {
+            sandboxInfo.artifacts = await sandboxSession.exportArtifacts(Array.isArray(rawSandbox.artifacts) ? rawSandbox.artifacts : []);
+            if (status === "PASS") {
+                sandboxInfo.promotedChanges = await sandboxSession.promote();
+                sandboxInfo.promoted = true;
+            }
+        }
 
-    if (status === "FAIL") process.exitCode = 2;
+        const report = {
+            version: VERSION,
+            createdAt: new Date().toISOString(),
+            taskId,
+            goal: outcome.plan.goal ?? task.goal,
+            planner: plannerName,
+            apply: Boolean(options.apply),
+            status,
+            plan: outcome.plan,
+            actions: outcome.actions,
+            repairs: outcome.repairs,
+            repairCount: outcome.repairCount,
+            maxRepairs,
+            resumed: outcome.resumed,
+            verification: outcome.verification,
+            repository: repositoryReportSummary(outcome.repository),
+            testFirst: outcome.testFirst,
+            coverage: outcome.coverage,
+            sandbox: sandboxInfo
+        };
+
+        const artifacts = await writeReport(originalWorkspace, report);
+        console.log(`Result: ${status}`);
+        if (sandboxEnabled && options.apply) console.log(`Sandbox promotion: ${sandboxInfo.promoted ? `PASS (${sandboxInfo.promotedChanges.length} file change(s))` : "NOT PROMOTED"}`);
+        console.log(`Report: ${artifacts.markdownPath}`);
+        console.log(`JSON:   ${artifacts.jsonPath}`);
+
+        if (status === "FAIL") process.exitCode = 2;
+    } finally {
+        if (sandboxSession) await sandboxSession.close({ preserve: Boolean(options["sandbox-keep"] || rawSandbox.keep) && status !== "PASS" });
+    }
 }
 
 

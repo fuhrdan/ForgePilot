@@ -1,61 +1,75 @@
-# ForgePilot v0.4 Validation
-
-Validated in the build environment on 2026-10-22 with Node.js 22.
+# ForgePilot v0.5 Validation
 
 ## Automated suite
 
-```bash
+Run:
+
+```text
 npm test
 ```
 
-Release-candidate result: **26 passed, 0 failed**.
-
-The v0.1–v0.3 regressions remain green and cover workspace containment, allowlisted execution, Ollama plan parsing, surgical patches, repair/retry, checkpoints/resume, repository detection/context, and Git-diff verification.
-
-v0.4 adds tests proving:
-
-1. Test inventory and goal-aware targeted Node test selection.
-2. A valid RED → implementation → GREEN → regression → build lifecycle.
-3. A test that is already green blocks implementation.
-4. A test that fails for the wrong expected reason blocks implementation.
-5. A missing/blocked runner does not count as RED.
-6. Implementation cannot edit a RED-proven test.
-7. GREEN failure can enter bounded repair while protected tests remain unchanged.
-8. LCOV summaries are ingested from real artifacts.
-
-## Command-environment regression
-
-During development, nested `node --test` processes inherited Node's parent `NODE_TEST_CONTEXT` test-harness variable. That could make repository test execution behave differently while ForgePilot itself was under test. `runCommand` now removes that internal parent-harness variable from child execution environments. The test-first suite then passed under the real `npm test` runner.
-
-## Release acceptance
-
-Before packaging, the release is required to pass:
-
-- all automated tests;
-- syntax checks for every `.js` source/test file;
-- CLI `--version` check;
-- repository `analyze` smoke test;
-- end-to-end test-first CLI smoke test in a temporary Git repository;
-- clean ZIP extraction followed by another full `npm test` run.
-
-## End-to-end CLI smoke test
-
-A clean copy of `examples/test-first-project` was initialized as a Git repository, committed, and its task was run through the public CLI with `enforceGitScope=true`.
-
-Observed result:
+Expected release result:
 
 ```text
-Result: PASS
-RED: PASS (expected failure signature matched)
-GREEN: PASS
-REGRESSION: PASS
-BUILD: PASS
-Git scope: PASS
-Test integrity: PASS
-Changed files:
-  modified src/math.js
-  added    test/math.test.js
-Unexpected changed files: 0
+tests 33
+pass 33
+fail 0
 ```
 
-The Markdown report independently recorded the RED evidence, engineering gates, Git attribution, and immutable-test check.
+The suite contains all v0.1–v0.4 tests plus v0.5 coverage for:
+
+- hardened Docker/Podman invocation construction;
+- preservation of the normal executable allowlist;
+- rejection of sandbox cwd escape;
+- original workspace remaining unchanged before promotion;
+- add/modify/delete manifest promotion;
+- exclusion of `node_modules` / internal runtime state from promotion;
+- artifact copy-out without source promotion;
+- action and verification command routing through the execution provider.
+
+## Host end-to-end acceptance
+
+The included test-first fixture is copied into a temporary Git repository and run through the actual CLI. Acceptance requires valid RED evidence, implementation, GREEN/regression/build gates, independent verification, and PASS.
+
+## Sandbox-runtime acceptance in this build environment
+
+The release build environment does not expose Docker or Podman. Consequently:
+
+1. container invocation is validated using an injected runner that captures the exact runtime command;
+2. the CLI `doctor` path must report the runtime as unavailable;
+3. requesting `--sandbox --apply` must fail before repository execution;
+4. the source workspace must remain unchanged by that failed attempt.
+
+This is deliberately recorded as a limitation rather than claiming an actual container was launched here. A CLI-level simulated-runtime acceptance test also exercises disposable-copy creation, provider routing, PASS-only promotion, artifact export, report metadata, and cleanup using a fake Docker executable that executes the requested command locally; this validates orchestration wiring but is not counted as real container isolation.
+
+On a Docker/Podman machine, pre-pull the configured image and run:
+
+```powershell
+node src/cli.js run examples/sandbox-task.json `
+  --workspace .\work\sandbox-demo `
+  --sandbox `
+  --apply
+```
+
+Expected behavior:
+
+- commands execute in the selected container image;
+- network is disabled by default;
+- the original workspace remains unchanged until verification passes;
+- PASS promotes `app.js` and `evidence.txt`;
+- the requested artifact is copied beneath `.forgepilot/artifacts/<task-id>/`;
+- FAIL does not promote source changes.
+
+## Archive acceptance
+
+Before release:
+
+1. syntax-check every `.js` file;
+2. run all 33 tests in the working tree;
+3. run CLI version/doctor smoke checks;
+4. run host end-to-end test-first acceptance;
+5. create the ZIP;
+6. extract the exact ZIP to a clean directory;
+7. rerun all 33 tests from the extracted archive;
+8. verify `forgepilot --version` prints `0.5.0`;
+9. verify no transient `.forgepilot/` state is included in the archive.

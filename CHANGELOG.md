@@ -1,33 +1,22 @@
 # Changelog
 
-## 0.4.0 — 2026-10-22
+## v0.5.0 — Disposable Sandbox
 
-### Added
-- Test-first AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD workflow.
-- Repository test-file inventory and targeted test ranking.
-- Direct targeted gates for Node `node --test` and Python `pytest` where safely derivable.
-- RED failure-signature checks (`failureIncludes`, `stdoutIncludes`, `stderrIncludes`).
-- False-green and test-infrastructure failure protection.
-- Test-only authoring policy and RED-proven test immutability.
-- GREEN/regression/build gates integrated with bounded repair.
-- LCOV and coverage-summary ingestion.
-- Test-first demo project and dedicated documentation.
+- Added an execution-provider abstraction shared by actions, RED/GREEN gates, verification commands, and repair retries.
+- Added Docker and Podman runtime detection.
+- Added opt-in `--sandbox` execution against a disposable copy of the repository.
+- Added default container hardening: no network, CPU/RAM/PID limits, dropped capabilities, `no-new-privileges`, bounded tmpfs, and `--pull never`.
+- Preserved ForgePilot's executable allowlist inside container mode.
+- Added PASS-only workspace promotion using before/after file manifests.
+- Failed sandbox runs leave the original source tree unchanged.
+- Added explicit artifact copy-out to `.forgepilot/artifacts/<task-id>/` without requiring source promotion.
+- Added sandbox metadata to JSON/Markdown reports.
+- Added `--sandbox-runtime`, `--sandbox-image`, and `--sandbox-keep`.
+- `doctor` now reports Docker/Podman and the selected sandbox runtime.
+- Added `docs/SANDBOX.md`.
+- Expanded automated suite from 26 to 33 tests.
+- Preserved all v0.1–v0.4 tests and host-mode behavior.
 
-### Changed
-- Repository analysis now exposes testing inventory and executable gates.
-- Ollama planner prompt understands test-first plans and immutable RED-proven tests.
-- Git expected-path calculation includes test-authoring changes.
-- Child command environment strips Node's parent test-harness control variable before repository test execution.
-- Checkpoint schema advances to v4 for test-first evidence/snapshots.
+### Known limitation
 
-### Validation
-- 26 automated tests passing, including all v0.1–v0.3 regressions.
-
-## 0.3.0 — 2026-10-22
-- Repository intelligence, token-budgeted context, project detection, Git baseline/diff verification.
-
-## 0.2.0 — 2026-10-22
-- Bounded autonomous repair loop, surgical patches, checkpoints and resume.
-
-## 0.1.0 — 2026-10-22
-- Guarded local execution, Scripted/Ollama planning, and independent verification.
+The validation environment for this release does not provide Docker or Podman, so container invocation is validated with an injected runner plus CLI runtime-unavailable behavior. The complete host workflow is additionally exercised end-to-end. On a machine with Docker/Podman installed, the new provider executes the constructed container command directly.

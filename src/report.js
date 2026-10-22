@@ -30,6 +30,21 @@ function renderMarkdown(report) {
         ""
     ];
 
+
+    if (report.sandbox?.enabled) {
+        lines.push("## Sandbox", "");
+        lines.push(`- Provider: ${report.sandbox.provider?.kind ?? "unknown"}`);
+        if (report.sandbox.provider?.runtime) lines.push(`- Runtime: ${report.sandbox.provider.runtime}`);
+        if (report.sandbox.provider?.image) lines.push(`- Image: \`${report.sandbox.provider.image}\``);
+        if (report.sandbox.provider?.network) lines.push(`- Network: ${report.sandbox.provider.network}`);
+        if (report.sandbox.provider?.memory) lines.push(`- Memory limit: ${report.sandbox.provider.memory}`);
+        if (report.sandbox.provider?.cpus) lines.push(`- CPU limit: ${report.sandbox.provider.cpus}`);
+        lines.push(`- Promoted to host workspace: ${report.sandbox.promoted ? "yes" : "no"}`);
+        lines.push(`- Promoted file changes: ${report.sandbox.promotedChanges?.length ?? 0}`);
+        lines.push(`- Exported artifacts: ${report.sandbox.artifacts?.length ?? 0}`);
+        lines.push("");
+    }
+
     if (report.repository) {
         lines.push("## Repository Intelligence", "");
         lines.push(`- Files discovered: ${report.repository.scan.fileCount}${report.repository.scan.truncated ? "+" : ""}`);
@@ -93,7 +108,7 @@ function renderMarkdown(report) {
             const value = report.coverage[metric];
             if (value && value.total > 0) lines.push(`- ${metric}: ${value.covered}/${value.total} (${value.pct}%)`);
         }
-    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.4.");
+    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.5.");
 
     lines.push("", "## Git", "");
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);

@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.4.0",
-  "description": "Local-first software engineering agent orchestrator with repository intelligence, test-first red/green gates, bounded autonomous repair, and independent verification.",
+  "version": "0.5.0",
+  "description": "Local-first software engineering agent orchestrator with disposable Docker/Podman sandboxes, repository intelligence, test-first gates, bounded repair, and independent verification.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

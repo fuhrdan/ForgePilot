@@ -1,211 +1,191 @@
-# ForgePilot v0.4.0
+# ForgePilot v0.5.0
 
 **A local-first software-engineering agent that proves its changes with executable evidence.**
 
-ForgePilot plans guarded edits, executes real tools, captures failures, performs bounded repairs, and runs an independent verifier. v0.4 adds a test-first engineering pipeline: a regression test is authored before implementation, ForgePilot proves it is RED, freezes that test, then requires GREEN/regression/build evidence before declaring success.
+ForgePilot combines repository intelligence, test-first engineering, bounded autonomous repair, independent verification, and now **disposable Docker/Podman execution**. In sandbox mode the real repository stays untouched until the entire engineering workflow passes.
 
 ## Requirements
 
 - Node.js 22+
 - Git recommended
+- Docker or Podman for `--sandbox`
 - Ollama optional for local-AI planning/debugging
 
-No npm runtime dependencies are required.
+ForgePilot has no npm runtime dependencies.
 
 ## Quick start
 
 ```powershell
 npm test
 node src/cli.js doctor
-node src/cli.js analyze . --goal "improve test-first engineering"
+node src/cli.js analyze . --goal "improve sandbox execution"
 ```
 
-Run a normal deterministic task:
+Normal host-mode deterministic task:
 
 ```powershell
 node src/cli.js run examples/hello-task.json --workspace .\work\hello --apply
 ```
 
-Run the test-first demo on a copy of the included fixture:
+Sandboxed task:
 
 ```powershell
-Copy-Item -Recurse examples\test-first-project .\work\test-first
-node src/cli.js run .\work\test-first\task.json `
-  --workspace .\work\test-first `
+node src/cli.js run task.json `
+  --workspace .\repo `
+  --sandbox `
+  --sandbox-runtime auto `
+  --sandbox-image node:22-bookworm `
   --apply
 ```
 
-The expected lifecycle is:
+Pre-pull the image yourself, for example `docker pull node:22-bookworm`. ForgePilot defaults to `--pull never` so it does not silently download a new execution image.
+
+## What v0.5 changes
+
+The execution path is now:
 
 ```text
-AUTHOR test
+Original Repository
+       |
+       v
+Disposable Copy
+       |
+       v
+Docker / Podman
+  |  network: none
+  |  CPU / RAM / PID limits
+  |  cap-drop ALL
+  |  no-new-privileges
+       |
+       v
+AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD
+       |
+       v
+Independent Verification
+       |
+      PASS? ---------------- FAIL
+       |                       |
+       v                       v
+Promote manifest delta       discard source changes
+       |
+       v
+Original Repository
+```
+
+The host repository is not the container mount. The disposable copy is.
+
+### Execution-provider boundary
+
+All repository command execution uses the same provider:
+
+- plan actions using `run_command`;
+- RED test gate;
+- GREEN/regression/build gates;
+- verifier command checks;
+- failed-step retries after repairs.
+
+This prevents a containerized main action from being followed by an accidental host-side test or repair command.
+
+### Default sandbox policy
+
+```text
+runtime       Docker or Podman
+network       none
+CPUs          2
+memory        2g
+PID limit     256
+capabilities  ALL dropped
+privileges    no-new-privileges
+/tmp          bounded tmpfs
+image pull    never
+```
+
+The original executable allowlist still applies inside the container.
+
+### Rollback by non-promotion
+
+ForgePilot snapshots the disposable tree, not the user's source tree. On PASS it promotes only the resulting added/modified/deleted files. On FAIL it simply does not promote them.
+
+That is safer than trying to repair the real workspace with `git reset --hard` after a failed autonomous run.
+
+### Artifact copy-out
+
+Task configuration can request evidence or build products even when source changes fail verification:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "artifacts": [
+      "dist/app.zip",
+      "coverage/lcov.info"
+    ]
+  }
+}
+```
+
+Those files are copied to:
+
+```text
+.forgepilot/artifacts/<task-id>/
+```
+
+### Sandbox configuration
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "runtime": "auto",
+    "image": "node:22-bookworm",
+    "network": "none",
+    "cpus": "2",
+    "memory": "2g",
+    "pidsLimit": 256,
+    "pullPolicy": "never",
+    "artifacts": ["dist/app.zip"]
+  }
+}
+```
+
+CLI flags override runtime/image selection:
+
+```text
+--sandbox
+--sandbox-runtime auto|docker|podman
+--sandbox-image IMAGE
+--sandbox-keep
+```
+
+`--sandbox-keep` keeps a failed disposable workspace for debugging.
+
+## Test-first engineering remains intact
+
+v0.4's workflow still applies:
+
+```text
+AUTHOR regression test
    ↓
-RED (must fail for expected reason)
+RED — must fail for the expected reason
    ↓
 freeze RED-proven test
    ↓
 IMPLEMENT
    ↓
-GREEN targeted test
+GREEN
    ↓
-REGRESSION suite
+REGRESSION
    ↓
 BUILD
    ↓
-independent verification / Git scope / test integrity
-   ↓
-PASS
+Git scope + test integrity + independent checks
 ```
 
-Omit `--apply` to inspect a plan without modifying the workspace.
-
-## What's new in v0.4
-
-### Test inventory and targeted selection
-
-Repository intelligence now recognizes conventional tests across JavaScript/TypeScript, Python, Go, Java, C#, Godot, and generic `test/`, `tests/`, and `spec/` layouts.
-
-Tests are ranked using the task goal and the implementation paths the plan intends to change. Where safe to derive directly, ForgePilot creates targeted commands for Node's built-in test runner and `pytest`. Repository-level test/build commands remain regression/build gates.
-
-`analyze` now shows testing information:
-
-```text
-Testing:
-  - Test files: 9
-  - Selected tests: test/auth-session.test.js
-  - Targeted gate: node --test test/auth-session.test.js
-  - Regression gate: npm test
-```
-
-### Real RED evidence
-
-A non-zero exit code alone is not always meaningful. v0.4 distinguishes:
-
-- **false green** — test already passes before implementation;
-- **infrastructure failure** — runner missing/blocked/timed out;
-- **wrong RED reason** — test failed, but expected failure text did not appear;
-- **valid RED** — test ran and failed for the expected reason.
-
-Optional RED signatures:
-
-```json
-{
-  "red": {
-    "command": "node",
-    "args": ["--test", "test/math.test.js"],
-    "failureIncludes": "Expected values to be strictly equal"
-  }
-}
-```
-
-`stdoutIncludes` and `stderrIncludes` are also supported.
-
-### Test-only authoring policy
-
-Before RED, `testActions` may modify only recognized test paths or explicitly allowed test paths. Implementation does not begin until the test-authoring phase passes policy checks.
-
-### RED-proven tests become immutable
-
-After valid RED evidence, ForgePilot snapshots the authored test files. Implementation and repair actions cannot modify them, and the final verifier hashes them again.
-
-That prevents this failure mode:
-
-```text
-hard test fails
-    ↓
-agent weakens assertion
-    ↓
-"PASS"
-```
-
-ForgePilot instead fails the run if a RED-proven test changes.
-
-### Engineering gates
-
-In test-first mode, ForgePilot adds executable verification gates:
-
-- GREEN targeted test;
-- regression suite when discovered/supplied;
-- build gate(s) when discovered/supplied;
-- independent task checks;
-- test-integrity check;
-- Git-scope check when enabled.
-
-GREEN/regression/build failures enter the existing bounded repair loop. Repairs may change implementation code but not RED-proven tests.
-
-### Coverage ingestion
-
-If present, ForgePilot reads:
-
-```text
-coverage/lcov.info
-lcov.info
-coverage/coverage-summary.json
-coverage-summary.json
-```
-
-Line/function/branch/statement summaries are included in the report. Coverage is informational in v0.4 and is never fabricated.
-
-## Test-first task format
-
-```json
-{
-  "goal": "Fix add(a, b)",
-  "testFirst": {
-    "testActions": [
-      {
-        "type": "write_file",
-        "path": "test/math.test.js",
-        "content": "..."
-      }
-    ],
-    "red": {
-      "command": "node",
-      "args": ["--test", "test/math.test.js"],
-      "failureIncludes": "Expected values to be strictly equal"
-    },
-    "green": {
-      "command": "node",
-      "args": ["--test", "test/math.test.js"]
-    }
-  },
-  "actions": [
-    {
-      "type": "replace_text",
-      "path": "src/math.js",
-      "find": "return 0;",
-      "replace": "return a + b;"
-    }
-  ],
-  "verify": [
-    {
-      "type": "file_contains",
-      "path": "src/math.js",
-      "text": "return a + b;"
-    }
-  ]
-}
-```
-
-If `regression` or `build` are omitted, ForgePilot uses safely discovered repository commands where possible.
-
-See `docs/TEST_FIRST.md` for the full contract.
+False-green tests, wrong RED failures, missing test runners, and attempts to weaken RED-proven tests fail closed.
 
 ## Repository intelligence
 
-v0.3 capabilities remain:
-
-- Git-native / `.gitignore`-aware scanning;
-- ecosystem/framework detection;
-- goal-aware token-budgeted source context;
-- build/test/lint command discovery;
-- Git baseline fingerprinting;
-- expected/unexpected changed-file attribution;
-- `git_diff` verification.
-
-Supported ecosystems include Node/TypeScript, .NET, Maven/Gradle Java, Python, Go, Rust, Godot, and generic C/C++.
-
-Analyze a repository:
+ForgePilot detects Node/TypeScript, .NET, Java/Maven/Gradle, Python, Go, Rust, Godot, and generic C/C++ projects. It performs ignore-aware scanning, ranks source context against the goal, discovers build/test commands, fingerprints Git state, and can reject unrelated file changes.
 
 ```powershell
 node src/cli.js analyze C:\code\my-app `
@@ -215,33 +195,13 @@ node src/cli.js analyze C:\code\my-app `
 
 ## Autonomous repair
 
-The v0.2 bounded repair loop remains active:
+Failures become structured evidence for a bounded repair loop:
 
 ```text
-failure evidence
-      ↓
-debugger
-      ↓
-small repair
-      ↓
-retry / re-verify
-      ↓
-PASS or repair budget exhausted
+failure → diagnose → surgical patch → retry → verify
 ```
 
-Use:
-
-```powershell
---max-repairs 3
-```
-
-Resume a checkpointed task:
-
-```powershell
-node src/cli.js run task.json --workspace .\repo --resume --max-repairs 3 --apply
-```
-
-v0.4 checkpoints preserve test-first RED evidence and the protected-test snapshot as well as the original Git baseline.
+Use `--max-repairs N`. Host mode continues to support `--resume`; disposable sandbox resume is intentionally deferred in v0.5.
 
 ## Guarded actions
 
@@ -251,91 +211,37 @@ Supported implementation/repair actions:
 - `replace_text`
 - `run_command`
 
-Commands use `spawn(..., shell: false)` and an executable allowlist:
+Commands run without a shell and must be allowlisted:
 
 ```text
 node npm npx git python python3 pytest
- go java javac mvn gradle dotnet cargo rustc godot godot4
+go java javac mvn gradle dotnet cargo rustc godot godot4
 ```
 
-The child environment also removes Node's parent test-harness control variable so a ForgePilot test run cannot accidentally inherit the harness state of ForgePilot's own tests.
+Docker/Podman are invoked only by ForgePilot's sandbox provider; they are not added to the agent's normal command allowlist.
 
-## Independent verification
-
-Supported explicit checks:
-
-- `file_exists`
-- `file_contains`
-- `command`
-- `git_diff`
-
-v0.4 additionally injects internal `test_gate` and `test_integrity` checks for test-first tasks.
-
-The planner cannot mark a verifier check successful. Real file/process/Git evidence determines the result.
-
-## Ollama
-
-Example:
-
-```powershell
-node src/cli.js run examples/ollama-task.json `
-  --planner ollama `
-  --model qwen2.5-coder:7b `
-  --max-repairs 3 `
-  --apply
-```
-
-The Ollama planner now receives repository testing metadata and understands the v0.4 test-first plan shape. It is instructed to author tests separately from implementation and not modify RED-proven tests during repair.
-
-## Reports
-
-Every applied run writes JSON and Markdown evidence under:
+## Validation
 
 ```text
-.forgepilot/runs/<timestamp>/
+v0.1   6 tests
+v0.2  12 tests
+v0.3  18 tests
+v0.4  26 tests
+v0.5  33 tests
 ```
 
-A v0.4 test-first report includes:
+The v0.5 suite covers container hardening arguments, command/cwd boundaries, disposable-workspace isolation, add/modify/delete promotion, artifact export without source promotion, and execution-provider routing.
 
-- repository/project detection;
-- selected test inventory;
-- test-authoring actions;
-- RED command, result, and reason;
-- implementation and repair history;
-- GREEN/regression/build gate results;
-- test-integrity result;
-- coverage summary if available;
-- Git change attribution and unexpected files.
+The release environment used to build this ZIP does not have Docker or Podman installed. Therefore the container command path is tested with an injected runtime runner, and the CLI is verified to fail safely when sandboxing is requested without a runtime. The host test-first workflow is also exercised end-to-end.
 
-Repository source excerpts used for planning remain transient and are not copied into normal reports.
+See:
 
-## Safety model
+- `docs/SANDBOX.md`
+- `docs/TEST_FIRST.md`
+- `docs/REPOSITORY_INTELLIGENCE.md`
+- `docs/ARCHITECTURE.md`
+- `docs/ROADMAP.md`
 
-ForgePilot v0.4 is still intentionally conservative:
+## Next milestone — v0.6
 
-- plan-only unless `--apply` is supplied;
-- workspace path containment;
-- no shell command strings;
-- executable allowlist;
-- bounded repairs;
-- exact patch occurrence guards;
-- test-only authoring phase;
-- false-green/wrong-RED protection;
-- immutable RED-proven tests;
-- independent verification;
-- optional Git scope enforcement.
-
-**Important:** v0.4 is not a hardened security sandbox. Allowed interpreters, compilers, test runners, and repository code still execute on the host. Disposable Docker/Podman isolation is the v0.5 milestone.
-
-## Roadmap
-
-- **v0.1** guarded execution ✅
-- **v0.2** bounded autonomous repair ✅
-- **v0.3** repository intelligence ✅
-- **v0.4** test-first engineering ✅
-- **v0.5** disposable sandbox providers
-- **v0.6** screenshot / visual verification
-- **v0.7** multi-agent roles
-- **v0.8** IDE/browser computer use
-- **v0.9** UI/installer/security hardening
-- **v1.0** verified autonomous software engineer
+**Visual Application Verification**: controlled application launch, screenshot capture, visual assertions, regression snapshots, and evidence-backed UI interaction.

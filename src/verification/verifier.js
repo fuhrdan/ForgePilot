@@ -28,7 +28,8 @@ export async function verifyPlan(plan, workspace, {
     apply = false,
     gitBaseline = null,
     expectedChangePaths = [],
-    enforceGitScope = false
+    enforceGitScope = false,
+    executionProvider = null
 } = {}) {
     const expectedPaths = expectedPathsFromPlan(plan, expectedChangePaths);
     const git = await getGitStatus(workspace);
@@ -64,7 +65,8 @@ export async function verifyPlan(plan, workspace, {
 
         if (check.type === "command" || check.type === "test_gate") {
             const cwd = resolveInside(workspace, check.cwd ?? ".");
-            const result = await runCommand({
+            const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
+            const result = await runner({
                 command: check.command,
                 args: Array.isArray(check.args) ? check.args.map(String) : [],
                 cwd,

@@ -1,0 +1,46 @@
+{
+  "goal": "Create a tiny Node program and verify it inside a disposable sandbox before promoting it.",
+  "sandbox": {
+    "enabled": true,
+    "runtime": "auto",
+    "image": "node:22-bookworm",
+    "network": "none",
+    "cpus": "1",
+    "memory": "512m",
+    "pidsLimit": 64,
+    "pullPolicy": "never",
+    "artifacts": ["evidence.txt"]
+  },
+  "actions": [
+    {
+      "type": "write_file",
+      "path": "app.js",
+      "content": "console.log('FORGEPILOT SANDBOX OK');\n"
+    },
+    {
+      "type": "run_command",
+      "command": "node",
+      "args": ["app.js"],
+      "expectExitCode": 0
+    },
+    {
+      "type": "write_file",
+      "path": "evidence.txt",
+      "content": "Sandbox execution completed.\n"
+    }
+  ],
+  "verify": [
+    {
+      "type": "command",
+      "command": "node",
+      "args": ["app.js"],
+      "expectExitCode": 0,
+      "stdoutIncludes": "FORGEPILOT SANDBOX OK"
+    },
+    {
+      "type": "file_contains",
+      "path": "evidence.txt",
+      "text": "Sandbox execution completed."
+    }
+  ]
+}

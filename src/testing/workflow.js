@@ -42,7 +42,7 @@ export function normalizeTestFirst(plan, repository, task = {}) {
     };
 }
 
-export async function executeTestAuthoring(testFirst, workspace, { apply = true } = {}) {
+export async function executeTestAuthoring(testFirst, workspace, { apply = true, executionProvider = null } = {}) {
     const results = [];
     for (let index = 0; index < testFirst.testActions.length; index++) {
         const action = testFirst.testActions[index];
@@ -54,7 +54,7 @@ export async function executeTestAuthoring(testFirst, workspace, { apply = true 
             results.push({ index, type: action.type, status: "failed", error: "Test-first authoring phase accepts only write_file or replace_text actions." });
             break;
         }
-        const result = await executeAction(action, workspace, { apply, index });
+        const result = await executeAction(action, workspace, { apply, index, executionProvider });
         results.push(result);
         if (result.status === "failed") break;
     }
@@ -83,13 +83,14 @@ export async function verifyTestOnlyDiff(workspace, gitBaseline, testFirst) {
     };
 }
 
-export async function runRedGate(workspace, gate) {
+export async function runRedGate(workspace, gate, executionProvider = null) {
     if (!gate?.command) {
         return { phase: "red", status: "failed", validRed: false, reason: "No executable test command could be discovered or supplied." };
     }
     let result;
     try {
-        result = await runCommand({ command: gate.command, args: gate.args, cwd: workspace, timeoutMs: gate.timeoutMs });
+        const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
+        result = await runner({ command: gate.command, args: gate.args, cwd: resolveInside(workspace, gate.cwd ?? "."), timeoutMs: gate.timeoutMs });
     } catch (error) {
         return { phase: "red", status: "failed", validRed: false, reason: `Test infrastructure failed; ${error.message}`, command: gate.command, args: gate.args, exitCode: -1, stdout: "", stderr: error.message, timedOut: false };
     }

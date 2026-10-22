@@ -7,34 +7,36 @@
 
 ## v0.2 — Autonomous repair loop ✅
 - Failure evidence → bounded repair → retry.
-- Surgical `replace_text`, checkpoints, and `--resume`.
+- Surgical `replace_text`, checkpoints, and host-mode `--resume`.
 
 ## v0.3 — Repository intelligence ✅
 - Ignore-aware scanning and project/framework detection.
 - Goal-aware source context and build/test hints.
 - Git baseline/diff attribution and scope verification.
 
-## v0.4 — Test-first engineering agent ✅ (this release)
-- Test inventory and goal/source-aware targeted selection.
-- Executable test/build gates derived from repository metadata.
-- Test-only authoring phase before implementation.
-- RED gate with false-green, infrastructure-failure, and expected-failure-signature checks.
-- RED-proven test immutability through implementation/repair.
-- GREEN, regression, and build gates before success.
-- Gate failures enter the bounded repair loop.
-- LCOV / coverage-summary ingestion when available.
+## v0.4 — Test-first engineering agent ✅
+- Test inventory and targeted selection.
+- AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD gates.
+- False-green/wrong-RED protection and immutable RED-proven tests.
+- Coverage artifact ingestion.
 
-## v0.5 — Disposable sandboxes
-- Docker/Podman sandbox provider.
-- Per-task CPU, RAM, disk, timeout, and network policy.
-- Workspace snapshots and rollback.
-- Dependency-install/network permissions.
-- Host execution becomes an explicit alternate provider.
+## v0.5 — Disposable sandboxes ✅ (this release)
+- Host/container execution-provider abstraction.
+- Docker/Podman runtime detection.
+- Disposable repository copy for sandboxed APPLY runs.
+- Default no-network policy plus CPU/RAM/PID limits.
+- Drop Linux capabilities + no-new-privileges.
+- No implicit image pulls (`--pull never` by default).
+- PASS-only manifest promotion to the original workspace.
+- Failed-run rollback by discarding the disposable copy.
+- Explicit artifact copy-out independent of source promotion.
+- Sandbox metadata in evidence reports.
 
 ## v0.6 — Visual application verification
-- Launch desktop/web applications.
+- Launch desktop/web applications from controlled execution environments.
 - Screenshot capture and vision-provider abstraction.
-- Visual assertions, regression snapshots, and basic UI interaction evidence.
+- Visual assertions and regression snapshots.
+- Basic UI interaction evidence.
 
 ## v0.7 — Multi-agent roles
 - Planner, Implementer, Debugger, Reviewer, Verifier.
@@ -52,4 +54,4 @@
 - Secrets/permission controls, signed provenance, crash recovery, task queue.
 
 ## v1.0 — Verified autonomous software engineering
-A task can be given as a goal plus repository. ForgePilot understands the repository, proves a regression where practical, implements a bounded change, builds, tests, launches when appropriate, visually/behaviorally verifies the result, repairs failures, and returns evidence-backed artifacts plus an attributable Git diff. Destructive/network actions remain permission-gated and success claims are backed by verifier evidence.
+A task can be given as a goal plus repository. ForgePilot understands the repository, proves a regression where practical, implements a bounded change in a controlled environment, builds, tests, launches when appropriate, visually/behaviorally verifies the result, repairs failures, and returns evidence-backed artifacts plus an attributable Git diff. Destructive/network actions remain permission-gated and success claims are backed by verifier evidence.
