@@ -11,7 +11,7 @@ function validatePlan(plan) {
     return plan;
 }
 
-function bounded(value, max = 12000) {
+function bounded(value, max = 16000) {
     const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     return text.length <= max ? text : `${text.slice(0, max)}\n...[truncated]`;
 }
@@ -60,27 +60,56 @@ function safetyRules() {
         `- Prefer small, reversible changes. During repair, prefer replace_text over rewriting entire files.\n` +
         `- Never use shell operators, redirection, pipes, curl, wget, powershell, cmd, bash, sh, sudo, rm, del, or network-download commands.\n` +
         `- Commands must be structured as command + args, never a shell string.\n` +
-        `- Allowed commands are node, npm, npx, git, python, python3, pytest, go, java, javac, mvn, gradle, dotnet, cargo, rustc.\n` +
+        `- Allowed commands are node, npm, npx, git, python, python3, pytest, go, java, javac, mvn, gradle, dotnet, cargo, rustc, godot, godot4.\n` +
         `- Verification must test the finished result rather than merely restating the actions.\n` +
+        `- git_diff verification may be used to assert that only intended files changed.\n` +
         `- Do not commit or push.\n`;
+}
+
+function repositorySection(context) {
+    const repository = context.repository;
+    if (!repository) {
+        return `Workspace files:\n${(context.files ?? []).join("\n") || "(empty workspace)"}\n`;
+    }
+
+    const projects = repository.projects.map((project) => {
+        const frameworks = project.frameworks?.length ? `; frameworks=${project.frameworks.join(", ")}` : "";
+        return `- ${project.ecosystem}: ${project.language}${frameworks}`;
+    }).join("\n") || "- unknown";
+
+    const hints = repository.commandHints.map((hint) =>
+        `- ${hint.kind}: ${hint.command} ${(hint.args ?? []).join(" ")}`.trim()
+    ).join("\n") || "- none";
+
+    const selected = repository.selectedFiles.map((file) =>
+        `\n--- ${file.path} ---\n${file.content}`
+    ).join("\n");
+
+    return `Repository intelligence:\n` +
+        `- Files discovered: ${repository.scan.fileCount}${repository.scan.truncated ? "+" : ""}\n` +
+        `- Scanner: ${repository.scan.source}\n` +
+        `- Context budget used: ~${repository.budget.approxTokensUsed}/${repository.budget.maxTokens} tokens\n` +
+        `Projects:\n${projects}\n` +
+        `Suggested commands:\n${hints}\n` +
+        `Selected source context:${selected || "\n(none)"}\n`;
 }
 
 function buildPlanPrompt(task, context) {
     return `You are ForgePilot's software-engineering planner. Produce JSON only.\n\n` +
         `Goal:\n${task.goal}\n\n` +
-        `Workspace files:\n${context.files.join("\n") || "(empty workspace)"}\n\n` +
+        repositorySection(context) + `\n` +
         `Git repository: ${context.git.isRepository ? "yes" : "no"}\n` +
         `Git branch: ${context.git.branch ?? "n/a"}\n\n` +
         `Return exactly this shape:\n` +
         `{\n  "goal": "...",\n  "rationale": "short explanation",\n  "actions": [...],\n  "verify": [...]\n}\n\n` +
-        actionSchema() + `Verification supports file_exists, file_contains, and command checks.\n\n` + safetyRules();
+        actionSchema() + `Verification supports file_exists, file_contains, command, and git_diff checks.\n\n` + safetyRules();
 }
 
 function buildRepairPrompt(task, context, evidence, attempt, originalPlan) {
     return `You are ForgePilot's debugger. A previous implementation or verification step failed. Produce JSON only.\n\n` +
         `Goal:\n${task.goal}\n\n` +
         `Repair attempt: ${attempt}\n\n` +
-        `Workspace files:\n${context.files.join("\n") || "(empty workspace)"}\n\n` +
+        repositorySection(context) + `\n` +
         `Original plan:\n${bounded(originalPlan)}\n\n` +
         `Failure evidence:\n${bounded(evidence)}\n\n` +
         `Return exactly this shape:\n` +

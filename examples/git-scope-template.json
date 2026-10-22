@@ -1,0 +1,26 @@
+{
+  "goal": "Add a small repository-intelligence demo marker and prove that no unrelated files changed.",
+  "planner": "scripted",
+  "workspace": ".",
+  "maxRepairs": 1,
+  "enforceGitScope": true,
+  "actions": [
+    {
+      "type": "write_file",
+      "path": "work/repository-intelligence-demo.txt",
+      "content": "ForgePilot v0.3 repository intelligence PASS\n"
+    }
+  ],
+  "verify": [
+    {
+      "type": "file_contains",
+      "path": "work/repository-intelligence-demo.txt",
+      "text": "repository intelligence PASS"
+    },
+    {
+      "type": "git_diff",
+      "allowedPaths": ["work/repository-intelligence-demo.txt"],
+      "maxChangedFiles": 1
+    }
+  ]
+}

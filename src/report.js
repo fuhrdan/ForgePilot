@@ -27,11 +27,26 @@ function renderMarkdown(report) {
         `- Result: ${report.status}`,
         `- Resumed: ${report.resumed ? "yes" : "no"}`,
         `- Repairs: ${report.repairCount ?? 0}/${report.maxRepairs ?? 0}`,
-        "",
-        "## Actions",
         ""
     ];
 
+    if (report.repository) {
+        lines.push("## Repository Intelligence", "");
+        lines.push(`- Files discovered: ${report.repository.scan.fileCount}${report.repository.scan.truncated ? "+" : ""}`);
+        lines.push(`- Scanner: ${report.repository.scan.source}`);
+        lines.push(`- AI context: ~${report.repository.budget.approxTokensUsed}/${report.repository.budget.maxTokens} tokens from ${report.repository.budget.selectedFileCount} files`);
+        for (const project of report.repository.projects ?? []) {
+            const frameworks = project.frameworks?.length ? `; ${project.frameworks.join(", ")}` : "";
+            lines.push(`- Project: ${project.ecosystem} / ${project.language}${frameworks}`);
+        }
+        if (report.repository.commandHints?.length) {
+            lines.push("", "Suggested commands:");
+            for (const hint of report.repository.commandHints) lines.push(`- ${hint.kind}: \`${hint.command} ${(hint.args ?? []).join(" ")}\``);
+        }
+        lines.push("");
+    }
+
+    lines.push("## Actions", "");
     for (const action of report.actions) {
         const phase = action.phase ? ` (${action.phase}${action.attempt ? ` #${action.attempt}` : ""})` : "";
         lines.push(`- ${action.index + 1}. ${action.type}${phase}: **${action.status}**`);
@@ -40,8 +55,7 @@ function renderMarkdown(report) {
     lines.push("", "## Repairs", "");
     if (!report.repairs?.length) lines.push("No repair attempts were required.");
     for (const repair of report.repairs ?? []) {
-        lines.push(`### Attempt ${repair.attempt}`);
-        lines.push("");
+        lines.push(`### Attempt ${repair.attempt}`, "");
         lines.push(`- Trigger: ${repair.trigger?.kind ?? "unknown"}`);
         lines.push(`- Rationale: ${repair.rationale || "(none)"}`);
         lines.push(`- Repair actions: ${repair.actions?.length ?? 0}`);
@@ -63,6 +77,21 @@ function renderMarkdown(report) {
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);
     if (report.verification.git.branch) lines.push(`- Branch: ${report.verification.git.branch}`);
     lines.push(`- Working tree changes: ${report.verification.git.porcelain ? "yes" : "no"}`);
+
+    const diff = report.verification.gitDiff;
+    if (diff?.available) {
+        lines.push(`- Changes since ForgePilot baseline: ${diff.changedFiles.length}`);
+        lines.push(`- Added / modified / deleted: ${diff.summary.added} / ${diff.summary.modified} / ${diff.summary.deleted}`);
+        lines.push(`- Unexpected changed files: ${diff.unexpectedFiles.length}`);
+        if (diff.changedFiles.length) {
+            lines.push("", "### Change Summary", "");
+            for (const item of diff.changedFiles) {
+                const unexpected = diff.unexpectedFiles.some((candidate) => candidate.path === item.path) ? " — **UNEXPECTED**" : "";
+                lines.push(`- ${item.status}: \`${item.path}\`${unexpected}`);
+            }
+        }
+    }
+
     lines.push("");
     return lines.join("\n");
 }

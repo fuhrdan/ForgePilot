@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { resolveInside } from "../core/paths.js";
 import { runCommand } from "../core/command.js";
 import { getGitStatus } from "../core/workspace.js";
+import { summarizeGitDiff } from "../repository/git-diff.js";
 
 async function exists(path) {
     try {
@@ -12,12 +13,29 @@ async function exists(path) {
     }
 }
 
-export async function verifyPlan(plan, workspace, { apply = false } = {}) {
+function expectedPathsFromPlan(plan, extras = []) {
+    const paths = [...extras];
+    for (const action of plan.actions ?? []) {
+        if (["write_file", "replace_text"].includes(action.type) && action.path) paths.push(action.path);
+    }
+    return [...new Set(paths.map(String))];
+}
+
+export async function verifyPlan(plan, workspace, {
+    apply = false,
+    gitBaseline = null,
+    expectedChangePaths = [],
+    enforceGitScope = false
+} = {}) {
+    const expectedPaths = expectedPathsFromPlan(plan, expectedChangePaths);
+    const git = await getGitStatus(workspace);
+
     if (!apply) {
         return {
             passed: null,
             checks: plan.verify.map((check, index) => ({ index, type: check.type, status: "planned" })),
-            git: await getGitStatus(workspace)
+            git,
+            gitDiff: await summarizeGitDiff(workspace, gitBaseline, expectedPaths)
         };
     }
 
@@ -65,13 +83,41 @@ export async function verifyPlan(plan, workspace, { apply = false } = {}) {
             continue;
         }
 
+        if (check.type === "git_diff") {
+            const allowed = Array.isArray(check.allowedPaths) ? check.allowedPaths : expectedPaths;
+            const diff = await summarizeGitDiff(workspace, gitBaseline, allowed);
+            const maxChanged = check.maxChangedFiles === undefined ? Infinity : Number(check.maxChangedFiles);
+            const noUnexpected = diff.available && !diff.incomplete && diff.unexpectedFiles.length === 0;
+            const withinLimit = diff.changedFiles.length <= maxChanged;
+            checks.push({
+                index,
+                type: check.type,
+                status: noUnexpected && withinLimit ? "passed" : "failed",
+                allowedPaths: allowed,
+                maxChangedFiles: Number.isFinite(maxChanged) ? maxChanged : null,
+                ...diff
+            });
+            continue;
+        }
+
         checks.push({ index, type: check.type, status: "failed", error: `Unsupported verification type: ${check.type}` });
     }
 
-    const git = await getGitStatus(workspace);
+    const gitDiff = await summarizeGitDiff(workspace, gitBaseline, expectedPaths);
+    if (enforceGitScope && gitDiff.available) {
+        checks.push({
+            index: checks.length,
+            type: "git_scope",
+            status: !gitDiff.incomplete && gitDiff.unexpectedFiles.length === 0 ? "passed" : "failed",
+            expectedPaths,
+            ...gitDiff
+        });
+    }
+
     return {
         passed: checks.every((check) => check.status === "passed"),
         checks,
-        git
+        git,
+        gitDiff
     };
 }

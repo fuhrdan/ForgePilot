@@ -3,7 +3,7 @@ import { ForgePilotError } from "./errors.js";
 
 export const DEFAULT_ALLOWED_COMMANDS = new Set([
     "node", "npm", "npx", "git", "python", "python3", "pytest",
-    "go", "java", "javac", "mvn", "gradle", "dotnet", "cargo", "rustc"
+    "go", "java", "javac", "mvn", "gradle", "dotnet", "cargo", "rustc", "godot", "godot4"
 ]);
 
 export async function commandExists(command) {

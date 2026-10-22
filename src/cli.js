@@ -8,8 +8,9 @@ import { commandExists, runCommand } from "./core/command.js";
 import { createTaskId, loadState } from "./core/state.js";
 import { runTaskWithRepairs } from "./orchestration/repair-loop.js";
 import { writeReport } from "./report.js";
+import { buildRepositoryContext } from "./repository/context.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -17,7 +18,10 @@ function usage() {
 `  forgepilot init <workspace>\n` +
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
+`  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
 `  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--max-repairs N] [--resume] [--apply]\n\n` +
+`Repository intelligence:\n` +
+`  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
 `Repair loop:\n` +
 `  Failed actions and verification checks can trigger bounded evidence-driven repairs.\n` +
 `  --max-repairs defaults to 2. --resume continues from the task checkpoint.\n\n` +
@@ -47,7 +51,7 @@ function parseOptions(args) {
 }
 
 async function doctor() {
-    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo"];
+    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4"];
     console.log(`ForgePilot v${VERSION} doctor\n`);
     for (const tool of tools) {
         const found = await commandExists(tool);
@@ -76,6 +80,18 @@ function buildPlanner(plannerName, task, options) {
     }
     if (plannerName === "scripted") return new ScriptedPlanner();
     throw new Error(`Unknown planner: ${plannerName}`);
+}
+
+
+function repositoryReportSummary(repository) {
+    if (!repository) return null;
+    return {
+        scan: repository.scan,
+        projects: repository.projects,
+        commandHints: repository.commandHints,
+        budget: repository.budget,
+        selectedFiles: (repository.selectedFiles ?? []).map(({ path, score }) => ({ path, score }))
+    };
 }
 
 async function runTask(taskFile, options) {
@@ -135,7 +151,8 @@ async function runTask(taskFile, options) {
         repairCount: outcome.repairCount,
         maxRepairs,
         resumed: outcome.resumed,
-        verification: outcome.verification
+        verification: outcome.verification,
+        repository: repositoryReportSummary(outcome.repository)
     };
 
     const artifacts = await writeReport(workspace, report);
@@ -144,6 +161,36 @@ async function runTask(taskFile, options) {
     console.log(`JSON:   ${artifacts.jsonPath}`);
 
     if (status === "FAIL") process.exitCode = 2;
+}
+
+
+async function analyzeRepository(workspaceArg, options) {
+    const workspace = await ensureWorkspace(workspaceArg ?? ".");
+    const maxContextTokens = Math.max(250, Number(options["max-context-tokens"] ?? 6000));
+    if (!Number.isFinite(maxContextTokens)) throw new Error("--max-context-tokens must be a number.");
+    const repository = await buildRepositoryContext(workspace, {
+        goal: options.goal ?? "",
+        maxContextTokens
+    });
+
+    console.log(`ForgePilot v${VERSION} repository analysis`);
+    console.log(`Workspace: ${workspace}`);
+    console.log(`Files: ${repository.scan.fileCount}${repository.scan.truncated ? "+" : ""} (${repository.scan.source})`);
+    console.log(`Context: ~${repository.budget.approxTokensUsed}/${repository.budget.maxTokens} tokens across ${repository.budget.selectedFileCount} files\n`);
+
+    console.log("Detected projects:");
+    for (const project of repository.projects) {
+        const frameworks = project.frameworks?.length ? ` [${project.frameworks.join(", ")}]` : "";
+        console.log(`  - ${project.ecosystem}: ${project.language}${frameworks}`);
+    }
+
+    console.log("\nSuggested commands:");
+    if (!repository.commandHints.length) console.log("  (none)");
+    for (const hint of repository.commandHints) console.log(`  - ${hint.kind}: ${hint.command} ${(hint.args ?? []).join(" ")}`.trimEnd());
+
+    console.log("\nSelected AI context:");
+    if (!repository.selectedFiles.length) console.log("  (none)");
+    for (const file of repository.selectedFiles) console.log(`  - ${file.path} (score ${file.score})`);
 }
 
 async function main() {
@@ -164,6 +211,11 @@ async function main() {
         const [url, workspace] = rest;
         if (!url || !workspace) throw new Error("clone requires <git-url> <workspace>.");
         return cloneRepository(url, workspace);
+    }
+
+    if (command === "analyze") {
+        const { options, positionals } = parseOptions(rest);
+        return analyzeRepository(positionals[0] ?? ".", options);
     }
 
     if (command === "run") {

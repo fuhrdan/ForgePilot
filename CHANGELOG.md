@@ -1,51 +1,52 @@
 # Changelog
 
-## 0.2.0 — 2026-10-22
-
-First autonomous repair release.
+## v0.3.0 — Repository Intelligence
 
 ### Added
-- Evidence-driven repair loop for failed implementation commands.
-- Repair loop for failures discovered by the independent verifier.
-- Global bounded repair budget via `--max-repairs`.
-- `replace_text` patch action with exact-occurrence safety guard.
-- Ollama debugger/repair prompt that receives the original plan and bounded failure evidence.
-- Scripted deterministic repair fixtures for automated testing.
-- Per-task checkpoints under `.forgepilot/state/`.
-- `--resume` support for continuing a failed/checkpointed task.
-- Repair/retry evidence in JSON and Markdown reports.
-- `examples/repair-task.json` demonstration.
-- Six additional automated tests, bringing the suite to 12 tests.
+
+- Git-backed repository scanner using `git ls-files -co --exclude-standard`.
+- `.gitignore`-aware filesystem fallback scanner for non-Git workspaces.
+- Detection for Node/TypeScript, common Node frameworks, .NET, Maven/Gradle, Python, Go, Rust, Godot, C, and C++.
+- Automatic build/test/lint command hints based on repository structure and package scripts.
+- Goal-aware source-file ranking.
+- Approximate token-budgeted source context for AI planners.
+- `forgepilot analyze` command.
+- Git baseline fingerprints captured before task execution.
+- Human-readable added/modified/deleted change summary.
+- Expected-vs-unexpected file classification.
+- `git_diff` independent verification check.
+- Optional `enforceGitScope` task-level verification.
+- `expectedChangePaths` for generator/build side effects.
+- Godot/Godot4 added to the executable allowlist and doctor probes.
+- Six repository-intelligence tests, bringing the release suite to 18 tests.
 
 ### Changed
-- Reports now distinguish original actions from retried actions.
-- Reports include task ID, resume status, repair budget, repair rationale, and retry outcome.
-- Ollama repair instructions prefer surgical `replace_text` edits over full-file rewrites.
-- CLI reports the active repair budget.
 
-### Safety
-- Repair attempts remain behind the existing `--apply` permission gate.
-- No shell access was added.
-- Repair commands use the same executable allowlist as initial actions.
-- Repair file operations use the same workspace-containment guard.
-- Ambiguous text patches fail closed rather than replacing multiple unexpected matches.
+- Ollama planning and repair prompts now receive selected repository source context, project metadata, and build/test hints instead of only a filename list.
+- Repair checkpoints now persist the original Git baseline, preserving accurate change attribution across `--resume`.
+- Markdown reports include repository detection and Git change summaries.
 
-## 0.1.0 — 2026-10-22
+### Privacy / safety
 
-Initial working prototype.
+- Source excerpts used for planner context are transient and are stripped from persistent run reports.
+- `git_diff` verification fails closed if the fingerprint scan is known to be incomplete.
+- Existing plan-only default, workspace path guard, shell-free execution, executable allowlist, patch occurrence guard, and bounded repair budget remain in force.
 
-### Added
-- Dependency-free Node 22 CLI.
-- `init`, `doctor`, `clone`, and `run` commands.
-- Scripted task planner for deterministic testing.
-- Ollama planner using `/api/generate` with JSON output.
-- Workspace path-containment guard.
-- Shell-free executable allowlist.
-- Explicit `--apply` permission gate.
-- File-writing and command-running actions.
-- Independent file/content/command verification.
-- Git state capture.
-- Markdown and JSON evidence reports.
-- Six automated tests.
-- Example scripted and Ollama tasks.
-- v0.1 → v1.0 roadmap.
+## v0.2.0 — Autonomous Repair Loop
+
+- Evidence-driven bounded repair loop.
+- `replace_text` surgical patch action.
+- Verification-failure repair.
+- Persistent checkpoints and `--resume`.
+- Explicit failure/repair/retry evidence in reports.
+- 12 passing tests.
+
+## v0.1.0 — Guarded Execution
+
+- Node 22 CLI.
+- Scripted and Ollama planners.
+- Guarded workspace file operations.
+- Allowlisted shell-free command execution.
+- Independent verification.
+- Git status capture and evidence reports.
+- 6 passing tests.

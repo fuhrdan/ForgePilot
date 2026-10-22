@@ -1,6 +1,6 @@
-# v0.2 Validation
+# v0.3 Validation
 
-Validated in the build environment on 2026-10-22 with Node.js v22.16.0.
+Validated in the build environment on 2026-10-22 with Node.js v22.x.
 
 ## Automated tests
 
@@ -8,51 +8,78 @@ Validated in the build environment on 2026-10-22 with Node.js v22.16.0.
 npm test
 ```
 
-Result: **12 passed, 0 failed**.
+Release result: **18 passed, 0 failed**.
 
-Coverage includes:
+The original v0.1/v0.2 regression tests remain and cover:
 
-- workspace child paths are accepted;
-- `..` traversal outside the workspace is rejected;
-- plan-only mode does not modify files;
-- apply mode writes files and independent verification succeeds;
-- a non-allowlisted shell executable is blocked;
-- an Ollama-compatible HTTP response is parsed into a structured plan;
-- `replace_text` successfully applies an exact surgical patch;
-- ambiguous `replace_text` operations fail closed;
-- a real failed Node process is patched and retried successfully;
-- a final independent-verification failure can trigger repair;
-- the repair budget prevents an unbounded retry loop;
-- a failed task checkpoint can be resumed with additional repair budget.
+- workspace path containment;
+- plan-only behavior;
+- guarded file writes;
+- shell/executable blocking;
+- Ollama structured-plan parsing;
+- exact `replace_text` patches;
+- ambiguous-patch failure;
+- real process failure → repair → retry;
+- verification-triggered repair;
+- repair-budget enforcement;
+- checkpoint resume.
 
-## End-to-end repair smoke test
+v0.3 adds tests proving:
 
-Command:
+1. Filesystem scanning honors root `.gitignore` and built-in generated-directory exclusions.
+2. Git-backed scanning delegates ignore behavior to Git.
+3. Node/TypeScript/framework detection and build/test hints work.
+4. Goal-relevant source is selected within the requested context budget.
+5. Git baseline comparison separates expected from unexpected changed files.
+6. `git_diff` verification fails on an unrelated repository change.
+
+## Repository-analysis smoke test
 
 ```bash
-node src/cli.js run examples/repair-task.json \
-  --workspace /tmp/forgepilot-v020-smoke \
-  --apply \
-  --max-repairs 2
+node src/cli.js analyze . \
+  --goal "improve repository intelligence and git diff verification" \
+  --max-context-tokens 1200
 ```
 
-Result: **PASS**.
-
-Observed sequence:
-
-1. ForgePilot wrote an intentionally broken Node program.
-2. The initial runtime action exited with code 1 and was recorded as **failed**.
-3. A `replace_text` repair replaced only the defective program body.
-4. ForgePilot reran the exact failed runtime action; it passed.
-5. The independent verifier launched the repaired program again and required `DEMO FIXED` in stdout.
-6. Final verification passed.
-
-The generated report correctly retained all three action events:
+Observed result:
 
 ```text
-write_file: passed
-run_command (main): failed
-run_command (retry #1): passed
+ForgePilot v0.3.0 repository analysis
+Files: 32 (filesystem)
+Context: ~1200/1200 tokens across 3 files
+Detected projects:
+  - node: JavaScript
+Suggested commands:
+  - test: npm test
+Selected AI context:
+  - src/repository/git-diff.js
+  - package.json
+  - README.md
 ```
 
-This demonstrates that v0.2 does not erase the original failure when a repair succeeds.
+This verifies the user-facing analyzer and demonstrates goal-sensitive ranking rather than README-only context selection.
+
+
+## End-to-end Git-scope smoke test
+
+A temporary Git repository was initialized with a committed `app.js`. ForgePilot captured the baseline, patched only `app.js`, executed it, reran it through independent verification, and enforced both an explicit `git_diff` check and task-level `enforceGitScope`.
+
+Observed result:
+
+```text
+Result: PASS
+changedFiles:
+  app.js (modified)
+unexpectedFiles: 0
+```
+
+The first smoke-test attempt exposed an internal-artifact attribution bug: `.forgepilot/state/...` was being seen by Git's untracked-file listing. v0.3 was corrected to apply ForgePilot's built-in internal/generated exclusions to the Git-backed scanner as well. The fixed path is covered by the Git scanner test and the repeated CLI smoke test passed.
+
+## Release acceptance criteria
+
+- Existing repair workflow remains green.
+- Repository analysis does not modify source files.
+- Planner context can contain source excerpts but persistent reports do not.
+- Explicit Git change-scope verification is independently evaluated.
+- Pre-task Git baseline is checkpointed for resume.
+- No npm runtime dependencies were added.

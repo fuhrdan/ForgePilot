@@ -1,12 +1,12 @@
 {
-  "goal": "Create and verify a tiny Node.js program that prints Hello from ForgePilot v0.1.",
+  "goal": "Create and verify a tiny Node.js program that prints Hello from ForgePilot v0.3.",
   "planner": "scripted",
   "workspace": "./hello-workspace",
   "actions": [
     {
       "type": "write_file",
       "path": "hello.js",
-      "content": "console.log(\"Hello from ForgePilot v0.1\");\n"
+      "content": "console.log(\"Hello from ForgePilot v0.3\");\n"
     },
     {
       "type": "run_command",
@@ -16,21 +16,14 @@
     }
   ],
   "verify": [
-    {
-      "type": "file_exists",
-      "path": "hello.js"
-    },
-    {
-      "type": "file_contains",
-      "path": "hello.js",
-      "text": "Hello from ForgePilot v0.1"
-    },
+    { "type": "file_exists", "path": "hello.js" },
+    { "type": "file_contains", "path": "hello.js", "text": "Hello from ForgePilot v0.3" },
     {
       "type": "command",
       "command": "node",
       "args": ["hello.js"],
       "expectExitCode": 0,
-      "stdoutIncludes": "Hello from ForgePilot v0.1"
+      "stdoutIncludes": "Hello from ForgePilot v0.3"
     }
   ]
 }

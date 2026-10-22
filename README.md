@@ -1,191 +1,418 @@
-# ForgePilot v0.2.0
+# ForgePilot v0.3.0
 
-**A local-first AI software-engineering orchestrator that must prove its work — and can now repair its own failures.**
+**A local-first software-engineering agent that plans, edits, executes, repairs, and independently verifies its work.**
 
-ForgePilot is moving from "LLM writes code" toward:
+ForgePilot is intentionally built around evidence rather than agent confidence. A planner can propose code changes, but it cannot declare success. ForgePilot executes guarded actions, captures real process output, retries failures through a bounded repair loop, and runs an independent verifier.
 
-`goal → plan → guarded actions → run/test → failure evidence → bounded repair → retry → independent verification → evidence`
-
-v0.2 adds the first autonomous debugging loop. A failed command or failed final verification can be fed back to the planner as structured evidence. ForgePilot then applies a bounded repair, reruns the failed step, and records the entire failure/repair history instead of hiding it.
+v0.3 adds **repository intelligence**: ForgePilot now detects what kind of codebase it is operating on, honors repository ignore rules, selects relevant source context under a token budget, suggests likely build/test commands, and audits the files changed since the task began.
 
 ## Requirements
 
 - Node.js 22+
-- Git
-- Optional: Ollama plus a coding model such as `qwen2.5-coder:7b`
-- Optional language toolchains required by the repository being worked on
+- Git recommended
+- Ollama optional for local-AI planning/debugging
 
-ForgePilot v0.2 has no runtime npm dependencies.
+No npm dependencies are required.
 
-## Install locally
+## Quick start
 
-```bash
-npm install
-npm link
-forgepilot doctor
+```powershell
+npm test
+node src/cli.js doctor
 ```
 
-On Windows PowerShell, the same commands work once Node.js is on `PATH`.
+Analyze a repository before asking an AI to touch it:
 
-## Try the new repair loop
-
-```bash
-node src/cli.js run examples/repair-task.json --workspace ./work/repair-demo --apply
+```powershell
+node src/cli.js analyze . --goal "fix authentication retry handling"
 ```
 
-The example intentionally creates a broken Node program, observes the non-zero exit code, applies a surgical `replace_text` patch, retries the exact failed command, and independently verifies the repaired runtime output.
+Run the deterministic hello example:
 
-Expected summary:
+```powershell
+node src/cli.js run examples/hello-task.json --workspace .\work\hello --apply
+```
+
+Run the autonomous-repair demonstration:
+
+```powershell
+node src/cli.js run examples/repair-task.json --workspace .\work\repair --apply --max-repairs 2
+```
+
+Use a local Ollama coding model:
+
+```powershell
+node src/cli.js run examples/ollama-task.json `
+  --planner ollama `
+  --model qwen2.5-coder:7b `
+  --apply
+```
+
+Omit `--apply` to inspect the proposed plan without modifying the workspace.
+
+## What's new in v0.3
+
+### Repository scanner
+
+When the workspace is a Git repository, ForgePilot asks Git for tracked and non-ignored untracked files:
 
 ```text
-Repair attempts used: 1/2
-Result: PASS
+git ls-files -co --exclude-standard
 ```
 
-The Markdown report preserves both the initial failure and successful retry.
+That means the repository's real `.gitignore`, global excludes, and Git exclude rules are honored by Git itself. Outside a Git repository, ForgePilot uses a built-in `.gitignore`-aware scanner and always excludes common generated directories such as `.git`, `.forgepilot`, `node_modules`, `bin`, `obj`, `target`, `dist`, and `build`.
 
-## Plan-only remains the default
+### Project detection
 
-```bash
-node src/cli.js run examples/repair-task.json --workspace ./work/repair-demo
+v0.3 recognizes:
+
+- Node.js / JavaScript / TypeScript
+- React, Next.js, Angular, Vue, Svelte, Express, Fastify, NestJS, Electron, Vite
+- .NET / C#
+- Maven / Java
+- Gradle / Java/Kotlin
+- Python
+- Go
+- Rust
+- Godot / GDScript / C#
+- generic C and C++ repositories
+
+The detector also supplies likely build/test/lint commands from manifests and project structure.
+
+### Token-budgeted context
+
+ForgePilot no longer gives a planner only a flat filename list. It ranks repository files using:
+
+- task-goal terms;
+- source-directory relevance;
+- manifests and project metadata;
+- README/project documentation;
+- test/source naming.
+
+Selected text files are read under `maxContextTokens` (default: 6000 approximate tokens) and supplied to the planner. Source excerpts are transient and are **not persisted in the normal run report**.
+
+Task JSON can override the budget:
+
+```json
+{
+  "goal": "Fix session expiration handling",
+  "maxContextTokens": 9000
+}
 ```
 
-No actions or repairs are applied without `--apply`.
+The CLI analyzer can use a separate budget:
 
-## Local Ollama mode
-
-Make sure Ollama is running and the model is installed:
-
-```bash
-node src/cli.js run examples/ollama-task.json \
-  --planner ollama \
-  --model qwen2.5-coder:7b
+```powershell
+node src/cli.js analyze C:\code\my-app `
+  --goal "fix session expiration handling" `
+  --max-context-tokens 4000
 ```
 
-Authorize generated actions and up to three repair attempts:
+### Build/test hints
 
-```bash
-node src/cli.js run examples/ollama-task.json \
-  --planner ollama \
-  --model qwen2.5-coder:7b \
-  --max-repairs 3 \
-  --apply
+Examples:
+
+```text
+Node package.json scripts:
+  test:  npm test
+  build: npm run build
+  lint:  npm run lint
+
+.NET:
+  build: dotnet build
+  test:  dotnet test --no-build
+
+Go:
+  test:  go test ./...
+  build: go build ./...
+
+Rust:
+  test:  cargo test
+  build: cargo build
 ```
 
-On Windows PowerShell, use backticks or place the command on one line.
+Hints are context, not automatically trusted commands. The planner still produces structured actions and the executor still enforces its command allowlist.
 
-## Resume a failed task
+## Git change intelligence
 
-ForgePilot checkpoints applied runs under `.forgepilot/state/`.
+At the beginning of an applied task, ForgePilot records a Git-aware baseline containing file fingerprints. After execution it compares the current repository against that baseline.
 
-If a run exhausts its repair budget or is interrupted after a checkpoint, continue the same task with:
+This distinguishes changes introduced during the task from dirty files that were already present when ForgePilot started.
 
-```bash
-node src/cli.js run my-task.json --workspace ./work/myrepo --resume --max-repairs 4 --apply
+Reports include:
+
+```text
+Changes since ForgePilot baseline: 3
+Added / modified / deleted: 1 / 2 / 0
+Unexpected changed files: 0
 ```
 
-The task ID is derived from the task file path and goal. Use the same task file and workspace when resuming.
+### `git_diff` verification
 
-## Work on an existing repository
+A task can explicitly require that only approved paths change:
 
-```bash
-node src/cli.js clone https://github.com/OWNER/REPO.git ./work/myrepo
+```json
+{
+  "type": "git_diff",
+  "allowedPaths": [
+    "src/auth.js",
+    "test/auth.test.js"
+  ],
+  "maxChangedFiles": 2
+}
 ```
 
-Then run a task against it:
+If ForgePilot or a program it launches also modifies `package.json`, `README.md`, or another unapproved file, this verification fails.
 
-```bash
-node src/cli.js run my-task.json \
-  --workspace ./work/myrepo \
-  --planner ollama \
-  --model qwen2.5-coder:7b \
-  --apply
+Directory scopes are supported:
+
+```json
+{
+  "type": "git_diff",
+  "allowedPaths": ["src/**", "test/**"]
+}
 ```
 
-## v0.2 repair behavior
+Tasks may also enable automatic change-scope enforcement:
 
-ForgePilot can repair two failure classes:
+```json
+{
+  "enforceGitScope": true,
+  "expectedChangePaths": ["src/generated/**"]
+}
+```
 
-1. **Action failure** — for example, compilation, tests, or a program command exits unexpectedly. ForgePilot sends the command evidence to the debugger, executes repair actions, then reruns the exact failed action.
-2. **Verification failure** — all implementation actions finished, but an independent verification check fails. ForgePilot sends only the failed checks as evidence, repairs, and reruns the verifier.
+File-writing actions are automatically included in the expected change set. `expectedChangePaths` is for additional files a build step or generator is expected to modify.
 
-The default repair budget is two attempts per task invocation/state. Change it with `--max-repairs N`.
+Even when enforcement is disabled, ForgePilot records the Git change audit in its report.
 
-## Surgical patches
+## Guarded action model
 
-v0.2 adds `replace_text`:
+Supported actions in v0.3:
+
+### `write_file`
+
+```json
+{
+  "type": "write_file",
+  "path": "src/app.js",
+  "content": "console.log('hello');\n"
+}
+```
+
+### `replace_text`
 
 ```json
 {
   "type": "replace_text",
   "path": "src/app.js",
-  "find": "return wrongValue;",
-  "replace": "return correctValue;",
+  "find": "oldValue",
+  "replace": "newValue",
   "expectedOccurrences": 1
 }
 ```
 
-The occurrence guard prevents ambiguous bulk replacement. If the exact expected number of matches is not found, the repair action fails rather than guessing.
+The patch fails closed if the exact occurrence count does not match.
 
-## Safety model
-
-ForgePilot still does **not** give the planner an unrestricted shell.
-
-- Plan-only unless `--apply` is supplied.
-- Commands are spawned directly with `shell: false`.
-- Executables must be on the ForgePilot allowlist.
-- Writes and patches are rejected if their paths escape the workspace.
-- `replace_text` can require an exact occurrence count.
-- Repair attempts have a hard budget.
-- Planner success claims are ignored; the verifier decides success.
-- Reports preserve failures, repairs, retries, and final verification evidence.
-
-This is a guarded host executor, **not yet a hardened sandbox**. v0.5 remains the milestone for disposable container/VM execution with resource and network policies.
-
-## Commands
-
-```text
-forgepilot init <workspace>
-forgepilot doctor
-forgepilot clone <git-url> <workspace>
-forgepilot run <task.json> [--workspace PATH]
-                           [--planner scripted|ollama]
-                           [--model MODEL]
-                           [--ollama-url URL]
-                           [--max-repairs N]
-                           [--resume]
-                           [--apply]
-```
-
-## Task repair fixture
-
-Scripted tasks can define deterministic `repairs[]`; this is mainly useful for tests and reproducible demos. Ollama tasks generate repair plans dynamically from observed failure evidence.
+### `run_command`
 
 ```json
 {
-  "goal": "Build and verify something",
-  "actions": [],
-  "verify": [],
-  "repairs": [
+  "type": "run_command",
+  "command": "node",
+  "args": ["src/app.js"],
+  "expectExitCode": 0
+}
+```
+
+Commands execute with `shell: false`. Shell strings, pipes, redirection, and arbitrary executables are not accepted.
+
+Current executable allowlist:
+
+```text
+node npm npx git python python3 pytest
+go java javac mvn gradle dotnet cargo rustc godot godot4
+```
+
+## Independent verification
+
+Supported checks:
+
+- `file_exists`
+- `file_contains`
+- `command`
+- `git_diff`
+
+Example:
+
+```json
+{
+  "verify": [
+    { "type": "file_exists", "path": "src/app.js" },
+    { "type": "file_contains", "path": "src/app.js", "text": "fixed" },
     {
-      "rationale": "First deterministic repair",
-      "actions": []
+      "type": "command",
+      "command": "node",
+      "args": ["src/app.js"],
+      "expectExitCode": 0,
+      "stdoutIncludes": "PASS"
+    },
+    {
+      "type": "git_diff",
+      "allowedPaths": ["src/app.js"]
     }
   ]
 }
 ```
 
-## Road to 1.0
+The verifier runs independently after implementation. A model saying "the fix worked" has no effect on the result.
 
-- **v0.1** — guarded local execution and independent verification ✅
-- **v0.2** — evidence-driven repair loop, surgical patches, checkpoint/resume ✅
-- **v0.3** — repository intelligence
-- **v0.4** — test-first agent
-- **v0.5** — disposable sandboxes
+## Autonomous repair loop
+
+v0.2's repair engine remains intact:
+
+```text
+implement
+   |
+   v
+execute --------------------+
+   |                         |
+   | failure evidence        |
+   v                         |
+debugger                     |
+   |                         |
+   v                         |
+surgical repair              |
+   |                         |
+   +------> retry ------------+
+   |
+   v
+independent verification
+   |
+   +-- failure --> bounded repair
+   |
+   v
+PASS / FAIL with evidence
+```
+
+`--max-repairs` defaults to 2.
+
+Checkpoints are written to:
+
+```text
+.forgepilot/state/<task-id>.json
+```
+
+Resume a failed task:
+
+```powershell
+node src/cli.js run task.json --workspace .\repo --resume --max-repairs 3 --apply
+```
+
+The Git baseline is stored in the checkpoint so a resumed task still measures changes against the state that existed before the original run.
+
+## Repository analysis command
+
+```text
+forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]
+```
+
+Example output:
+
+```text
+ForgePilot v0.3.0 repository analysis
+Workspace: C:\code\sample
+Files: 184 (git)
+Context: ~3962/6000 tokens across 7 files
+
+Detected projects:
+  - node: TypeScript/JavaScript [React, Vite]
+
+Suggested commands:
+  - test: npm test
+  - build: npm run build
+
+Selected AI context:
+  - src/auth/session.ts (score 165)
+  - package.json (score 95)
+  - test/auth/session.test.ts (score 75)
+```
+
+## Safety model
+
+ForgePilot v0.3 is intentionally conservative:
+
+- plan-only unless `--apply` is supplied;
+- workspace-relative paths cannot escape the selected workspace;
+- commands are invoked without a shell;
+- executable allowlist;
+- repair retries are bounded;
+- exact patch occurrence guard;
+- planner cannot mark verification successful;
+- source context is not persisted in normal run reports;
+- Git scope verification can reject unrelated changes.
+
+**Important:** v0.3 is not yet a hardened security sandbox. Allowed compilers/interpreters can execute repository code on the host. Disposable container/VM isolation is the v0.5 milestone.
+
+## Architecture
+
+```text
+Goal / Task
+    |
+    v
+Repository Intelligence
+    |-- ignore-aware scanner
+    |-- project detector
+    |-- build/test hints
+    |-- context ranker + token budget
+    |
+    v
+Planner (scripted / Ollama)
+    |
+    v
+Guarded Executor
+    |
+    +---- failure evidence ----> Debugger
+    |                              |
+    |                         bounded repair
+    |                              |
+    +<--------- retry -------------+
+    |
+    v
+Independent Verifier
+    |-- files
+    |-- commands
+    |-- Git change scope
+    |
+    v
+Evidence Report + Checkpoint
+```
+
+See `docs/ARCHITECTURE.md` and `docs/REPOSITORY_INTELLIGENCE.md` for details.
+
+## Roadmap
+
+- **v0.1** — guarded local execution ✅
+- **v0.2** — bounded autonomous repair ✅
+- **v0.3** — repository intelligence ✅
+- **v0.4** — test-first engineering agent
+- **v0.5** — disposable Docker/Podman sandboxes
 - **v0.6** — screenshot and visual verification
-- **v0.7** — Planner / Implementer / Debugger / Reviewer / Verifier roles
-- **v0.8** — IDE/browser computer use
-- **v0.9** — dashboard, installer, model/security hardening
-- **v1.0** — evidence-backed autonomous software engineering
+- **v0.7** — planner / implementer / debugger / reviewer / verifier roles
+- **v0.8** — IDE/browser computer-use driver
+- **v0.9** — Windows UI, installer, model profiles, security hardening
+- **v1.0** — evidence-backed autonomous software engineer
 
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+## Tests
+
+```powershell
+npm test
+```
+
+v0.3.0 release validation: **18 tests passed, 0 failed**.
+
+See `docs/VALIDATION.md`.
+
+## License
+
+MIT
