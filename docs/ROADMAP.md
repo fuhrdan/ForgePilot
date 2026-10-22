@@ -1,6 +1,6 @@
 # ForgePilot Roadmap: v0.1 → v1.0
 
-## v0.1 — Guarded local execution (this release)
+## v0.1 — Guarded local execution ✅
 - Node 22 CLI.
 - Scripted and Ollama planners.
 - Workspace-constrained file writes.
@@ -11,17 +11,21 @@
 - JSON + Markdown run reports.
 - Doctor and clone commands.
 
-## v0.2 — Repair loop
+## v0.2 — Autonomous repair loop ✅ (this release)
 - Feed failed action/test output back to the planner.
+- Repair independent-verification failures.
 - Bounded retry budget.
-- Patch-oriented edits instead of rewriting every file.
-- Run history and resumable tasks.
+- Patch-oriented `replace_text` edits with ambiguity guard.
+- Run history with explicit failure/repair/retry evidence.
+- Per-task checkpoints and `--resume`.
 
 ## v0.3 — Repository intelligence
-- Project/language detection.
+- Project/language/framework detection.
 - Read selected source files for planning context.
-- Ignore rules and token-budgeted context builder.
-- Git diff verifier and change summary.
+- `.gitignore` / ignore-aware repository scanner.
+- Token-budgeted context builder.
+- Git diff verifier and human-readable change summary.
+- Automatic build/test command hints based on project structure.
 
 ## v0.4 — Test-first agent
 - Automatic test-command discovery.
@@ -60,7 +64,4 @@
 - Signed run manifests / provenance.
 
 ## v1.0 — Verified autonomous software engineering
-A task can be given as a goal plus repository. ForgePilot plans, edits, builds, tests,
-launches when appropriate, visually/behaviorally verifies the result, repairs failures,
-and returns evidence-backed artifacts and a clean Git diff. Destructive/network actions
-remain permission-gated and all success claims are backed by verifier evidence.
+A task can be given as a goal plus repository. ForgePilot plans, edits, builds, tests, launches when appropriate, visually/behaviorally verifies the result, repairs failures, and returns evidence-backed artifacts and a clean Git diff. Destructive/network actions remain permission-gated and all success claims are backed by verifier evidence.

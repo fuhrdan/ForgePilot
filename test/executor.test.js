@@ -38,3 +38,27 @@ test("command allowlist blocks shell", async () => {
     const plan = { actions: [{ type: "run_command", command: "sh", args: ["-c", "echo bad"] }], verify: [] };
     await assert.rejects(executePlan(plan, workspace, { apply: true }), /not allowlisted/);
 });
+
+test("replace_text applies a surgical patch with occurrence guard", async () => {
+    const workspace = await tempWorkspace();
+    await fs.writeFile(path.join(workspace, "patch.txt"), "alpha beta alpha", "utf8");
+    const plan = {
+        actions: [{ type: "replace_text", path: "patch.txt", find: "beta", replace: "fixed", expectedOccurrences: 1 }],
+        verify: []
+    };
+    const results = await executePlan(plan, workspace, { apply: true });
+    assert.equal(results[0].status, "passed");
+    assert.equal(await fs.readFile(path.join(workspace, "patch.txt"), "utf8"), "alpha fixed alpha");
+});
+
+test("replace_text refuses ambiguous patches", async () => {
+    const workspace = await tempWorkspace();
+    await fs.writeFile(path.join(workspace, "patch.txt"), "same same", "utf8");
+    const plan = {
+        actions: [{ type: "replace_text", path: "patch.txt", find: "same", replace: "x", expectedOccurrences: 1 }],
+        verify: []
+    };
+    const results = await executePlan(plan, workspace, { apply: true });
+    assert.equal(results[0].status, "failed");
+    assert.match(results[0].error, /found 2/);
+});

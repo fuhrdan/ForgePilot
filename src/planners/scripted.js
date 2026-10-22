@@ -11,4 +11,21 @@ export class ScriptedPlanner {
             verify: task.verify ?? []
         };
     }
+
+    async repair(task, _context, evidence, attempt) {
+        const repair = Array.isArray(task.repairs) ? task.repairs[attempt - 1] : null;
+        if (!repair) {
+            return {
+                rationale: `No scripted repair is defined for attempt ${attempt}.`,
+                actions: [],
+                verify: []
+            };
+        }
+
+        return {
+            rationale: repair.rationale ?? `Scripted repair attempt ${attempt} for ${evidence.kind} failure.`,
+            actions: repair.actions ?? [],
+            verify: repair.verify ?? []
+        };
+    }
 }

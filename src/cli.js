@@ -3,13 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ScriptedPlanner } from "./planners/scripted.js";
 import { OllamaPlanner } from "./planners/ollama.js";
-import { executePlan } from "./actions/executor.js";
-import { verifyPlan } from "./verification/verifier.js";
-import { initializeWorkspace, ensureWorkspace, getGitStatus, summarizeWorkspace } from "./core/workspace.js";
+import { initializeWorkspace, ensureWorkspace } from "./core/workspace.js";
 import { commandExists, runCommand } from "./core/command.js";
+import { createTaskId, loadState } from "./core/state.js";
+import { runTaskWithRepairs } from "./orchestration/repair-loop.js";
 import { writeReport } from "./report.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -17,24 +17,30 @@ function usage() {
 `  forgepilot init <workspace>\n` +
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--apply]\n\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--max-repairs N] [--resume] [--apply]\n\n` +
+`Repair loop:\n` +
+`  Failed actions and verification checks can trigger bounded evidence-driven repairs.\n` +
+`  --max-repairs defaults to 2. --resume continues from the task checkpoint.\n\n` +
 `Safety:\n` +
 `  AI-generated actions are plan-only unless --apply is explicitly supplied.\n` +
 `  Commands run without a shell and must be on ForgePilot's executable allowlist.\n` +
-`  File writes are constrained to the selected workspace.\n`);
+`  File writes and patches are constrained to the selected workspace.\n`);
 }
 
 function parseOptions(args) {
     const options = {};
     const positionals = [];
+    const flags = new Set(["apply", "resume"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        if (arg === "--apply") options.apply = true;
-        else if (arg.startsWith("--")) {
+        if (arg.startsWith("--")) {
             const key = arg.slice(2);
-            const value = args[++i];
-            if (value === undefined) throw new Error(`Missing value for ${arg}`);
-            options[key] = value;
+            if (flags.has(key)) options[key] = true;
+            else {
+                const value = args[++i];
+                if (value === undefined) throw new Error(`Missing value for ${arg}`);
+                options[key] = value;
+            }
         } else positionals.push(arg);
     }
     return { options, positionals };
@@ -61,55 +67,75 @@ async function cloneRepository(url, workspace) {
     else await initializeWorkspace(workspace);
 }
 
+function buildPlanner(plannerName, task, options) {
+    if (plannerName === "ollama") {
+        return new OllamaPlanner({
+            model: options.model ?? task.model ?? "qwen2.5-coder:7b",
+            baseUrl: options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434"
+        });
+    }
+    if (plannerName === "scripted") return new ScriptedPlanner();
+    throw new Error(`Unknown planner: ${plannerName}`);
+}
+
 async function runTask(taskFile, options) {
     const taskPath = path.resolve(taskFile);
     const task = JSON.parse(await fs.readFile(taskPath, "utf8"));
     const workspace = await ensureWorkspace(options.workspace ?? task.workspace ?? path.dirname(taskPath));
     await initializeWorkspace(workspace);
 
-    const git = await getGitStatus(workspace);
-    const files = await summarizeWorkspace(workspace);
     const plannerName = options.planner ?? task.planner ?? "scripted";
-    let planner;
+    const planner = buildPlanner(plannerName, task, options);
+    const taskId = createTaskId(taskPath, task);
+    const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? 2));
+    if (!Number.isFinite(maxRepairs)) throw new Error("--max-repairs must be a number.");
 
-    if (plannerName === "ollama") {
-        planner = new OllamaPlanner({
-            model: options.model ?? task.model ?? "qwen2.5-coder:7b",
-            baseUrl: options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434"
-        });
-    } else if (plannerName === "scripted") {
-        planner = new ScriptedPlanner();
-    } else {
-        throw new Error(`Unknown planner: ${plannerName}`);
+    let resumeState = null;
+    if (options.resume) {
+        resumeState = await loadState(workspace, taskId);
+        if (!resumeState) throw new Error(`No checkpoint exists for task ${taskId}.`);
     }
 
     console.log(`ForgePilot v${VERSION}`);
     console.log(`Goal: ${task.goal ?? "(no goal supplied)"}`);
     console.log(`Workspace: ${workspace}`);
     console.log(`Planner: ${plannerName}`);
-    console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}\n`);
+    console.log(`Repair budget: ${maxRepairs}`);
+    console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}${options.resume ? " / RESUME" : ""}\n`);
 
-    const plan = await planner.plan(task, { workspace, git, files });
-    console.log(`Plan rationale: ${plan.rationale ?? "(none)"}`);
-    console.log(`Actions: ${plan.actions.length}; verification checks: ${plan.verify.length}\n`);
+    const outcome = await runTaskWithRepairs({
+        task,
+        planner,
+        plannerName,
+        workspace,
+        apply: Boolean(options.apply),
+        maxRepairs,
+        taskId,
+        resumeState
+    });
 
-    const actions = await executePlan(plan, workspace, { apply: Boolean(options.apply) });
-    const actionFailure = actions.some((item) => item.status === "failed");
-    const verification = actionFailure
-        ? { passed: false, checks: [], git: await getGitStatus(workspace), skipped: "action failure" }
-        : await verifyPlan(plan, workspace, { apply: Boolean(options.apply) });
+    console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
+    console.log(`Actions: ${outcome.plan.actions.length}; verification checks: ${outcome.plan.verify.length}`);
+    if (outcome.repairCount > 0) console.log(`Repair attempts used: ${outcome.repairCount}/${maxRepairs}`);
+    console.log("");
 
-    const status = !options.apply ? "PLANNED" : (!actionFailure && verification.passed ? "PASS" : "FAIL");
+    const actionFailure = outcome.actions.some((item) => item.status === "failed") && !outcome.verification.passed;
+    const status = !options.apply ? "PLANNED" : (!actionFailure && outcome.verification.passed ? "PASS" : "FAIL");
     const report = {
         version: VERSION,
         createdAt: new Date().toISOString(),
-        goal: plan.goal ?? task.goal,
+        taskId,
+        goal: outcome.plan.goal ?? task.goal,
         planner: plannerName,
         apply: Boolean(options.apply),
         status,
-        plan,
-        actions,
-        verification
+        plan: outcome.plan,
+        actions: outcome.actions,
+        repairs: outcome.repairs,
+        repairCount: outcome.repairCount,
+        maxRepairs,
+        resumed: outcome.resumed,
+        verification: outcome.verification
     };
 
     const artifacts = await writeReport(workspace, report);
@@ -124,7 +150,6 @@ async function main() {
     const [command, ...rest] = process.argv.slice(2);
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
     if (["version", "--version", "-v"].includes(command)) return console.log(VERSION);
-
     if (command === "doctor") return doctor();
 
     if (command === "init") {

@@ -3,3 +3,5 @@ node_modules/
 .forgepilot/workspaces/
 *.log
 .DS_Store
+
+.forgepilot/state/

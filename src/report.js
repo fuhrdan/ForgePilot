@@ -21,21 +21,39 @@ function renderMarkdown(report) {
         "# ForgePilot Task Report",
         "",
         `- Version: ${report.version}`,
+        `- Task ID: ${report.taskId ?? "n/a"}`,
         `- Goal: ${report.goal}`,
         `- Mode: ${report.apply ? "APPLY" : "PLAN ONLY"}`,
         `- Result: ${report.status}`,
+        `- Resumed: ${report.resumed ? "yes" : "no"}`,
+        `- Repairs: ${report.repairCount ?? 0}/${report.maxRepairs ?? 0}`,
         "",
         "## Actions",
         ""
     ];
 
     for (const action of report.actions) {
-        lines.push(`- ${action.index + 1}. ${action.type}: **${action.status}**`);
+        const phase = action.phase ? ` (${action.phase}${action.attempt ? ` #${action.attempt}` : ""})` : "";
+        lines.push(`- ${action.index + 1}. ${action.type}${phase}: **${action.status}**`);
     }
 
-    lines.push("", "## Verification", "");
+    lines.push("", "## Repairs", "");
+    if (!report.repairs?.length) lines.push("No repair attempts were required.");
+    for (const repair of report.repairs ?? []) {
+        lines.push(`### Attempt ${repair.attempt}`);
+        lines.push("");
+        lines.push(`- Trigger: ${repair.trigger?.kind ?? "unknown"}`);
+        lines.push(`- Rationale: ${repair.rationale || "(none)"}`);
+        lines.push(`- Repair actions: ${repair.actions?.length ?? 0}`);
+        if (repair.retry?.status) lines.push(`- Failed-step retry: **${repair.retry.status}**`);
+        if (typeof repair.retry?.passed === "boolean") lines.push(`- Re-verification: **${repair.retry.passed ? "PASS" : "FAIL"}**`);
+        lines.push("");
+    }
+
+    lines.push("## Verification", "");
     if (report.verification.passed === null) lines.push("Verification not executed in plan-only mode.");
     else lines.push(`Overall: **${report.verification.passed ? "PASS" : "FAIL"}**`);
+    if (report.verification.skipped) lines.push(`Reason: ${report.verification.skipped}`);
 
     for (const check of report.verification.checks) {
         lines.push(`- ${check.index + 1}. ${check.type}: **${check.status}**`);

@@ -1,23 +1,21 @@
-# ForgePilot v0.1.0
+# ForgePilot v0.2.0
 
-**An AI software-engineering orchestrator that must prove its work.**
+**A local-first AI software-engineering orchestrator that must prove its work — and can now repair its own failures.**
 
-ForgePilot is a local-first experiment in moving from "LLM writes code" to:
+ForgePilot is moving from "LLM writes code" toward:
 
-`goal → plan → guarded actions → build/run → independent verification → evidence`
+`goal → plan → guarded actions → run/test → failure evidence → bounded repair → retry → independent verification → evidence`
 
-v0.1 deliberately starts small. It can use a local Ollama model to produce a structured
-software-engineering plan, execute that plan inside a selected workspace, and verify the
-result using checks that are run independently of the planner.
+v0.2 adds the first autonomous debugging loop. A failed command or failed final verification can be fed back to the planner as structured evidence. ForgePilot then applies a bounded repair, reruns the failed step, and records the entire failure/repair history instead of hiding it.
 
 ## Requirements
 
 - Node.js 22+
 - Git
 - Optional: Ollama plus a coding model such as `qwen2.5-coder:7b`
-- Optional language toolchains depending on the repository being worked on
+- Optional language toolchains required by the repository being worked on
 
-No npm dependencies are required for v0.1.
+ForgePilot v0.2 has no runtime npm dependencies.
 
 ## Install locally
 
@@ -27,38 +25,66 @@ npm link
 forgepilot doctor
 ```
 
-On Windows PowerShell the same commands work once Node.js is installed and available on PATH.
+On Windows PowerShell, the same commands work once Node.js is on `PATH`.
 
-## First verified run
-
-From the ForgePilot directory:
+## Try the new repair loop
 
 ```bash
-node src/cli.js run examples/hello-task.json --apply
+node src/cli.js run examples/repair-task.json --workspace ./work/repair-demo --apply
 ```
 
-The example writes `hello.js`, executes it, and then independently verifies that the file
-exists, contains the expected text, and produces the expected output.
+The example intentionally creates a broken Node program, observes the non-zero exit code, applies a surgical `replace_text` patch, retries the exact failed command, and independently verifies the repaired runtime output.
 
-Without `--apply`, ForgePilot only plans:
+Expected summary:
+
+```text
+Repair attempts used: 1/2
+Result: PASS
+```
+
+The Markdown report preserves both the initial failure and successful retry.
+
+## Plan-only remains the default
 
 ```bash
-node src/cli.js run examples/hello-task.json
+node src/cli.js run examples/repair-task.json --workspace ./work/repair-demo
 ```
 
-## Use a local Ollama model
+No actions or repairs are applied without `--apply`.
 
-Make sure Ollama is running and that the model exists locally, then:
+## Local Ollama mode
+
+Make sure Ollama is running and the model is installed:
 
 ```bash
-node src/cli.js run examples/ollama-task.json --planner ollama --model qwen2.5-coder:7b
+node src/cli.js run examples/ollama-task.json \
+  --planner ollama \
+  --model qwen2.5-coder:7b
 ```
 
-Inspect the plan/report first. To allow the generated actions to run:
+Authorize generated actions and up to three repair attempts:
 
 ```bash
-node src/cli.js run examples/ollama-task.json --planner ollama --model qwen2.5-coder:7b --apply
+node src/cli.js run examples/ollama-task.json \
+  --planner ollama \
+  --model qwen2.5-coder:7b \
+  --max-repairs 3 \
+  --apply
 ```
+
+On Windows PowerShell, use backticks or place the command on one line.
+
+## Resume a failed task
+
+ForgePilot checkpoints applied runs under `.forgepilot/state/`.
+
+If a run exhausts its repair budget or is interrupted after a checkpoint, continue the same task with:
+
+```bash
+node src/cli.js run my-task.json --workspace ./work/myrepo --resume --max-repairs 4 --apply
+```
+
+The task ID is derived from the task file path and goal. Use the same task file and workspace when resuming.
 
 ## Work on an existing repository
 
@@ -66,48 +92,55 @@ node src/cli.js run examples/ollama-task.json --planner ollama --model qwen2.5-c
 node src/cli.js clone https://github.com/OWNER/REPO.git ./work/myrepo
 ```
 
-Then point a task's `workspace` field at `./work/myrepo`, or override it:
+Then run a task against it:
 
 ```bash
-node src/cli.js run my-task.json --workspace ./work/myrepo --planner ollama --model qwen2.5-coder:7b
+node src/cli.js run my-task.json \
+  --workspace ./work/myrepo \
+  --planner ollama \
+  --model qwen2.5-coder:7b \
+  --apply
 ```
 
-## Safety model in v0.1
+## v0.2 repair behavior
 
-ForgePilot does **not** give an LLM an unrestricted shell.
+ForgePilot can repair two failure classes:
 
-- AI execution is plan-only unless `--apply` is supplied.
-- Commands are spawned directly, not via a shell.
-- Only an explicit executable allowlist is permitted.
-- File paths are resolved and rejected if they escape the workspace.
-- The v0.1 planner is told not to commit or push.
-- Reports preserve action and verification evidence.
+1. **Action failure** — for example, compilation, tests, or a program command exits unexpectedly. ForgePilot sends the command evidence to the debugger, executes repair actions, then reruns the exact failed action.
+2. **Verification failure** — all implementation actions finished, but an independent verification check fails. ForgePilot sends only the failed checks as evidence, repairs, and reruns the verifier.
 
-This is an early sandboxing layer, not a hardened security boundary. v0.5 is planned to add
-disposable container/VM providers with resource and network policies.
+The default repair budget is two attempts per task invocation/state. Change it with `--max-repairs N`.
 
-## Task format
+## Surgical patches
 
-A scripted task looks like this:
+v0.2 adds `replace_text`:
 
 ```json
 {
-  "goal": "Create a hello program",
-  "planner": "scripted",
-  "workspace": "./hello-workspace",
-  "actions": [
-    { "type": "write_file", "path": "hello.js", "content": "console.log(\"hello\");\n" },
-    { "type": "run_command", "command": "node", "args": ["hello.js"], "expectExitCode": 0 }
-  ],
-  "verify": [
-    { "type": "file_exists", "path": "hello.js" },
-    { "type": "command", "command": "node", "args": ["hello.js"], "stdoutIncludes": "hello" }
-  ]
+  "type": "replace_text",
+  "path": "src/app.js",
+  "find": "return wrongValue;",
+  "replace": "return correctValue;",
+  "expectedOccurrences": 1
 }
 ```
 
-For an Ollama task, supply the goal and planner; the model generates the structured actions
-and checks.
+The occurrence guard prevents ambiguous bulk replacement. If the exact expected number of matches is not found, the repair action fails rather than guessing.
+
+## Safety model
+
+ForgePilot still does **not** give the planner an unrestricted shell.
+
+- Plan-only unless `--apply` is supplied.
+- Commands are spawned directly with `shell: false`.
+- Executables must be on the ForgePilot allowlist.
+- Writes and patches are rejected if their paths escape the workspace.
+- `replace_text` can require an exact occurrence count.
+- Repair attempts have a hard budget.
+- Planner success claims are ignored; the verifier decides success.
+- Reports preserve failures, repairs, retries, and final verification evidence.
+
+This is a guarded host executor, **not yet a hardened sandbox**. v0.5 remains the milestone for disposable container/VM execution with resource and network policies.
 
 ## Commands
 
@@ -119,13 +152,40 @@ forgepilot run <task.json> [--workspace PATH]
                            [--planner scripted|ollama]
                            [--model MODEL]
                            [--ollama-url URL]
+                           [--max-repairs N]
+                           [--resume]
                            [--apply]
 ```
 
-## What v0.1 proves
+## Task repair fixture
 
-The important feature is not code generation itself. It is separation of **claim** from
-**evidence**. The planner proposes work; the executor performs guarded actions; the verifier
-checks the resulting repository state and program behavior.
+Scripted tasks can define deterministic `repairs[]`; this is mainly useful for tests and reproducible demos. Ollama tasks generate repair plans dynamically from observed failure evidence.
 
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the path to v1.0.
+```json
+{
+  "goal": "Build and verify something",
+  "actions": [],
+  "verify": [],
+  "repairs": [
+    {
+      "rationale": "First deterministic repair",
+      "actions": []
+    }
+  ]
+}
+```
+
+## Road to 1.0
+
+- **v0.1** — guarded local execution and independent verification ✅
+- **v0.2** — evidence-driven repair loop, surgical patches, checkpoint/resume ✅
+- **v0.3** — repository intelligence
+- **v0.4** — test-first agent
+- **v0.5** — disposable sandboxes
+- **v0.6** — screenshot and visual verification
+- **v0.7** — Planner / Implementer / Debugger / Reviewer / Verifier roles
+- **v0.8** — IDE/browser computer use
+- **v0.9** — dashboard, installer, model/security hardening
+- **v1.0** — evidence-backed autonomous software engineering
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

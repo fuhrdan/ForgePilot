@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.1.0",
-  "description": "Local-first software engineering agent orchestrator with guarded execution and independent verification.",
+  "version": "0.2.0",
+  "description": "Local-first software engineering agent orchestrator with guarded execution, bounded autonomous repair, resumable checkpoints, and independent verification.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

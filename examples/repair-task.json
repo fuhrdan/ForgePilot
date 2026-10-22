@@ -1,0 +1,41 @@
+{
+  "goal": "Create a tiny Node program, observe its deliberate failure, repair it, and prove the corrected runtime output.",
+  "planner": "scripted",
+  "maxRepairs": 2,
+  "actions": [
+    {
+      "type": "write_file",
+      "path": "demo/repair-me.js",
+      "content": "console.error('DEMO BROKEN');\nprocess.exit(1);\n"
+    },
+    {
+      "type": "run_command",
+      "command": "node",
+      "args": ["demo/repair-me.js"],
+      "expectExitCode": 0
+    }
+  ],
+  "verify": [
+    {
+      "type": "command",
+      "command": "node",
+      "args": ["demo/repair-me.js"],
+      "expectExitCode": 0,
+      "stdoutIncludes": "DEMO FIXED"
+    }
+  ],
+  "repairs": [
+    {
+      "rationale": "The process deliberately exits 1. Patch only the broken program body and let ForgePilot rerun the original command.",
+      "actions": [
+        {
+          "type": "replace_text",
+          "path": "demo/repair-me.js",
+          "find": "console.error('DEMO BROKEN');\nprocess.exit(1);",
+          "replace": "console.log('DEMO FIXED');",
+          "expectedOccurrences": 1
+        }
+      ]
+    }
+  ]
+}
