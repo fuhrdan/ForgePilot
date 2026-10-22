@@ -1,0 +1,6 @@
+{
+  "goal": "Create a dependency-free Node.js command line app named wordcount.js that accepts a text file path and prints lines, words, and characters. Add a small test file and verify the program runs correctly.",
+  "planner": "ollama",
+  "model": "qwen2.5-coder:7b",
+  "workspace": "./ollama-workspace"
+}

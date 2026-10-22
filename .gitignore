@@ -1,0 +1,5 @@
+node_modules/
+.forgepilot/runs/
+.forgepilot/workspaces/
+*.log
+.DS_Store
