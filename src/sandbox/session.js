@@ -107,7 +107,7 @@ export async function createSandboxSession(originalWorkspace, { taskId = "task",
             const exported = [];
             for (const relative of paths) {
                 const normalized = String(relative).replaceAll("\\", "/");
-                if (!normalized.startsWith(".forgepilot/visual/")) continue;
+                if (!normalized.startsWith(".forgepilot/visual/") && !normalized.startsWith(".forgepilot/computer/")) continue;
                 const src = resolveInside(workspace, normalized);
                 try {
                     const stat = await fs.stat(src);

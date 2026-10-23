@@ -1,103 +1,41 @@
-# ForgePilot v0.7 Architecture
+# ForgePilot v0.8 Architecture
 
 ```text
 Task / Goal
     |
-    v
 Repository Intelligence
     |
-    v
 Planner [read-only]
     |
-    v
 Implementer [mutation proposals]
     |
-    v
-Test-first Controller (optional)
-    |
-    v
-Execution Provider
-   / \
-Host  Disposable Sandbox
-       |-- Docker / Podman
-       |-- network policy
-       |-- CPU / RAM / PID limits
-       v
-Guarded Executor / Test Gates
-    |
-    v
+    +------------------+
+    |                  |
+Guarded Executor   ComputerSession
+    |              /            \
+Host/Sandbox     Replay          CDP
+    |                         browser / Electron / IDE
+    |                              |
+    |                    accessibility + input + PNG
+    +---------------+--------------+
+                    |
 Reviewer [read-only]
-   / \
-approve  request changes
-  |            |
-  |            v
-  |      Implementer revision
-  |            |
-  +------------+
-    |
-    v
-Visual + Deterministic Verification
-    |
-    v
+                    |
+Tests / Build / Git / Visual / UI-state evidence
+                    |
 Verifier [read-only]
-   / \
-approve  reject
-  |       |
-  |       v
-  |    Debugger [mutation proposals]
-  |       |
-  +-------+--> bounded re-verification
-    |
-    v
-PASS / sandbox promotion / evidence report
+                    |
+Debugger on bounded failure
+                    |
+PASS / promotion / report
 ```
 
 ## Trust boundaries
 
-### Planner
-Read-only. Produces strategy, risks, and acceptance criteria. It cannot execute code or return mutation actions in multi-agent mode.
+The orchestrator owns budgets, PASS/FAIL, evidence, protected test/baseline hashes, role policy, and session policy. Agents do not execute code or UI operations directly.
 
-### Implementer
-May propose structured mutations. It never writes files directly; all actions pass through the guarded executor and existing workspace/sandbox policies.
+The `ComputerSession` owns one persistent GUI connection for the task. It validates actions, validates current target origin when the driver can expose it, sequences actions, redacts sensitive typing, writes screenshots, and persists a replayable trace.
 
-### Debugger
-Receives concrete failure evidence and may propose the smallest repair. Repair count remains bounded by `maxRepairs`.
+The CDP driver contains only browser/Electron protocol operations; it does not expose arbitrary JavaScript evaluation as an agent action. CSS-selector lookup is generated internally for bounded click/type operations.
 
-### Reviewer
-Read-only. It may approve or request changes with structured findings. Any attempt to return actions/commands/patches is a policy violation and fails closed. Reviewer change requests are routed back to the Implementer with a separate bounded review-round budget.
-
-### Verifier
-Read-only. It receives a bounded summary of deterministic checks and Git-diff evidence. It cannot make a failed deterministic gate pass. When configured as a required gate, rejection becomes a failed `agent_verifier` check that can enter the Debugger loop.
-
-### Orchestrator
-Owns sequencing, budgets, protected test/baseline hashes, role-policy enforcement, evidence persistence, and PASS/FAIL. Agents do not directly call one another.
-
-### Execution provider
-All repository code execution goes through one provider. Sandbox mode keeps repository code inside the disposable copy until PASS-only promotion.
-
-### Test-first controller
-Owns AUTHOR → RED → IMPLEMENT → GREEN sequencing and protects RED-proven tests from later modification.
-
-### Visual controller
-Fingerprints configured PNG baselines before implementation and performs deterministic dimensions/pixel/region checks plus optional local vision assertions.
-
-## Structured handoffs
-
-Persistent handoff records contain summaries rather than source excerpts:
-
-```json
-{
-  "from": "reviewer",
-  "to": "implementer",
-  "kind": "review_verdict",
-  "summary": {
-    "round": 1,
-    "verdict": "request_changes",
-    "findings": [
-      { "severity": "error", "path": "src/app.js", "message": "..." }
-    ]
-  }
-}
-```
-
-This keeps the audit trail useful without turning reports into copies of private source code.
+Real computer control is kept out of v0.8 sandbox mode because an IDE connected to the host repository is outside the disposable filesystem boundary. This is a deliberate fail-closed boundary, not an implicit host escape.

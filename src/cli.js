@@ -15,8 +15,9 @@ import { OllamaVisionProvider } from "./visual/ollama.js";
 import { decodePng } from "./visual/png.js";
 import { compareImages } from "./visual/diff.js";
 import { AgentTeam } from "./agents/team.js";
+import { createComputerSession } from "./computer/factory.js";
 
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -25,11 +26,14 @@ function usage() {
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--computer] [--computer-driver cdp|replay] [--computer-endpoint URL] [--computer-target TEXT] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Multi-agent engineering (v0.7):\n` +
+`Computer / IDE control (v0.8):\n` +
+`  task.computer enables persistent CDP/replay GUI sessions with accessibility inspection, clicks, typing, keys, screenshots, and replayable traces.\n` +
+`  Navigation is localhost-only by default unless task.computer.allowedOrigins explicitly expands it.\n\n` +
+`Multi-agent engineering (v0.7+):\n` +
 `  Planner, Implementer, Debugger, Reviewer, and Verifier roles exchange structured evidence.\n` +
 `  Reviewer/Verifier are read-only; use --agents to enable for scripted tasks or --no-agents to disable the default Ollama team.\n\n` +
 `Visual verification (v0.6+):\n` +
@@ -50,7 +54,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "sandbox", "sandbox-keep", "agents", "no-agents"]);
+    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -67,7 +71,7 @@ function parseOptions(args) {
 }
 
 async function doctor() {
-    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "chromium", "google-chrome", "docker", "podman"];
+    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "chromium", "google-chrome", "msedge", "code", "codium", "docker", "podman"];
     console.log(`ForgePilot v${VERSION} doctor\n`);
     for (const tool of tools) {
         const found = await commandExists(tool);
@@ -177,7 +181,7 @@ async function runTask(taskFile, options) {
     let sandboxSession = null;
     let workingWorkspace = originalWorkspace;
     let executionProvider = new HostExecutionProvider();
-    let sandboxInfo = { enabled: sandboxEnabled, provider: executionProvider.describe(), promoted: false, promotedChanges: [], artifacts: [], visualEvidence: [] };
+    let sandboxInfo = { enabled: sandboxEnabled, provider: executionProvider.describe(), promoted: false, promotedChanges: [], artifacts: [], visualEvidence: [], computerEvidence: [] };
 
     if (sandboxEnabled && options.apply) {
         sandboxSession = await createSandboxSession(originalWorkspace, {
@@ -200,6 +204,20 @@ async function runTask(taskFile, options) {
         sandboxInfo.workspace = workingWorkspace;
     }
 
+    const rawComputer = task.computer === true ? {} : (task.computer && typeof task.computer === "object" ? task.computer : {});
+    const computerEnabled = Boolean(options.computer || task.computer === true || rawComputer.enabled === true);
+    const computerConfig = computerEnabled ? {
+        ...rawComputer,
+        enabled: true,
+        driver: options["computer-driver"] ?? rawComputer.driver ?? "cdp",
+        endpoint: options["computer-endpoint"] ?? rawComputer.endpoint,
+        targetHint: options["computer-target"] ?? rawComputer.targetHint ?? rawComputer.target
+    } : null;
+    if (sandboxEnabled && options.apply && computerConfig && computerConfig.driver !== "replay") {
+        throw new Error("Real computer/IDE control cannot be combined with --sandbox in v0.8 because a host GUI could bypass PASS-only sandbox promotion. Use host mode or the replay driver.");
+    }
+    const computerSession = computerConfig ? createComputerSession(computerConfig, { workspace: workingWorkspace, taskId }) : null;
+
     let resumeState = null;
     if (options.resume) {
         resumeState = await loadState(originalWorkspace, taskId);
@@ -212,6 +230,7 @@ async function runTask(taskFile, options) {
     console.log(`Planner: ${plannerName}`);
     console.log(`Agent team: ${agentsEnabled ? `ON (review rounds ${maxReviewRounds}, verifier gate ${agentTeam.requireVerifierApproval ? "required" : "advisory"})` : "OFF"}`);
     console.log(`Repair budget: ${maxRepairs}`);
+    console.log(`Computer control: ${computerSession ? `${computerConfig.driver}${computerConfig.endpoint ? ` @ ${computerConfig.endpoint}` : ""}` : "OFF"}`);
     if (sandboxEnabled) console.log(`Sandbox: ${options.apply ? `${sandboxInfo.provider.runtime ?? "planned"} / ${sandboxInfo.provider.image ?? rawSandbox.image ?? "node:22-bookworm"}` : "planned"}`);
     console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}${options.resume ? " / RESUME" : ""}\n`);
 
@@ -229,7 +248,8 @@ async function runTask(taskFile, options) {
             resumeState,
             executionProvider,
             visionProvider,
-            agentTeam
+            agentTeam,
+            computerSession
         });
 
         console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
@@ -240,9 +260,13 @@ async function runTask(taskFile, options) {
         const actionFailure = outcome.actions.some((item) => item.status === "failed") && !outcome.verification.passed;
         status = !options.apply ? "PLANNED" : (!actionFailure && outcome.verification.passed ? "PASS" : "FAIL");
 
+        if (computerSession) await computerSession.close();
+        const computerInfo = computerSession ? computerSession.snapshot() : { enabled: false };
+
         if (sandboxSession) {
             const visualArtifacts = Array.isArray(outcome.visual?.evidencePaths) ? outcome.visual.evidencePaths : [];
             sandboxInfo.visualEvidence = await sandboxSession.exportEvidence(visualArtifacts);
+            sandboxInfo.computerEvidence = await sandboxSession.exportEvidence(computerInfo.evidencePaths ?? []);
             sandboxInfo.artifacts = await sandboxSession.exportArtifacts(Array.isArray(rawSandbox.artifacts) ? rawSandbox.artifacts : []);
             if (status === "PASS") {
                 sandboxInfo.promotedChanges = await sandboxSession.promote();
@@ -271,6 +295,7 @@ async function runTask(taskFile, options) {
             visual: outcome.visual ?? outcome.verification.visual ?? null,
             visionProvider: visionProvider?.describe?.() ?? null,
             multiAgent: outcome.multiAgent ?? agentTeam.snapshot(),
+            computer: computerInfo,
             sandbox: sandboxInfo
         };
 
@@ -282,6 +307,7 @@ async function runTask(taskFile, options) {
 
         if (status === "FAIL") process.exitCode = 2;
     } finally {
+        if (computerSession) await computerSession.close();
         if (sandboxSession) await sandboxSession.close({ preserve: Boolean(options["sandbox-keep"] || rawSandbox.keep) && status !== "PASS" });
     }
 }

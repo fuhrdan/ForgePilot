@@ -25,7 +25,7 @@ function mutationPayloads(value, trail = "root", found = []) {
         if (["command", "patch", "replacement", "replace", "content"].includes(lower) && child !== null && child !== undefined && child !== "") {
             found.push(`${trail}.${key}`);
         }
-        if (lower === "type" && ["write_file", "replace_text", "run_command"].includes(String(child))) {
+        if (lower === "type" && ["write_file", "replace_text", "run_command", "computer_navigate", "computer_inspect", "computer_assert", "computer_click", "computer_type", "computer_key", "computer_wait", "computer_screenshot"].includes(String(child))) {
             found.push(`${trail}.${key}`);
         }
         mutationPayloads(child, `${trail}.${key}`, found);

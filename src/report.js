@@ -94,6 +94,19 @@ function renderMarkdown(report) {
         lines.push("");
     }
 
+
+    if (report.computer?.enabled) {
+        lines.push("## Computer / IDE Control", "");
+        lines.push(`- Driver: ${report.computer.driver?.kind ?? "unknown"}`);
+        if (report.computer.driver?.endpoint) lines.push(`- Endpoint: ${report.computer.driver.endpoint}`);
+        if (report.computer.driver?.targetHint) lines.push(`- Target hint: ${report.computer.driver.targetHint}`);
+        lines.push(`- Interaction actions: ${report.computer.actions ?? 0}`);
+        lines.push(`- Passed / failed: ${report.computer.passed ?? 0} / ${report.computer.failed ?? 0}`);
+        if (report.computer.tracePath) lines.push(`- Replayable trace: \`${report.computer.tracePath}\``);
+        if (report.computer.evidenceDir) lines.push(`- Evidence directory: \`${report.computer.evidenceDir}\``);
+        lines.push("");
+    }
+
     if (report.multiAgent?.enabled) {
         lines.push("## Multi-Agent Engineering", "");
         lines.push(`- Roles: Planner (read-only), Implementer (mutation), Debugger (mutation), Reviewer (read-only), Verifier (read-only)`);
@@ -153,7 +166,7 @@ function renderMarkdown(report) {
             const value = report.coverage[metric];
             if (value && value.total > 0) lines.push(`- ${metric}: ${value.covered}/${value.total} (${value.pct}%)`);
         }
-    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.7.");
+    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.8.");
 
     lines.push("", "## Git", "");
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);

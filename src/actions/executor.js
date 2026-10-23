@@ -3,8 +3,9 @@ import path from "node:path";
 import { resolveInside } from "../core/paths.js";
 import { runCommand } from "../core/command.js";
 import { ForgePilotError } from "../core/errors.js";
+import { COMPUTER_ACTION_TYPES } from "../computer/policy.js";
 
-export async function executeAction(action, workspace, { apply = false, index = 0, executionProvider = null } = {}) {
+export async function executeAction(action, workspace, { apply = false, index = 0, executionProvider = null, computerSession = null } = {}) {
     if (!apply) return { index, type: action.type, status: "planned", action };
 
     if (action.type === "write_file") {
@@ -38,6 +39,14 @@ export async function executeAction(action, workspace, { apply = false, index = 
         return { index, type: action.type, status: "passed", path: action.path, occurrences };
     }
 
+    if (COMPUTER_ACTION_TYPES.has(action.type)) {
+        if (!computerSession) {
+            return { index, type: action.type, status: "failed", error: "Computer action requested but no computer session is enabled." };
+        }
+        const result = await computerSession.execute(action);
+        return { index, type: action.type, ...result };
+    }
+
     if (action.type === "run_command") {
         const cwd = resolveInside(workspace, action.cwd ?? ".");
         const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
@@ -55,10 +64,10 @@ export async function executeAction(action, workspace, { apply = false, index = 
     throw new ForgePilotError(`Unsupported action type: ${action.type}`, "UNSUPPORTED_ACTION");
 }
 
-export async function executePlan(plan, workspace, { apply = false, executionProvider = null } = {}) {
+export async function executePlan(plan, workspace, { apply = false, executionProvider = null, computerSession = null } = {}) {
     const results = [];
     for (let index = 0; index < plan.actions.length; index++) {
-        const result = await executeAction(plan.actions[index], workspace, { apply, index, executionProvider });
+        const result = await executeAction(plan.actions[index], workspace, { apply, index, executionProvider, computerSession });
         results.push(result);
         if (result.status === "failed") break;
     }

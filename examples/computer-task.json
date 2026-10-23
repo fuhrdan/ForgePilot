@@ -1,0 +1,68 @@
+{
+  "goal": "Exercise persistent computer-control actions with deterministic replay evidence",
+  "computer": {
+    "enabled": true,
+    "driver": "replay",
+    "screenshotBase64": "iVBORw0KGgoAAAANSUhEUgAAAKAAAABaCAYAAAA/xl1SAAAAvklEQVR42u3SMQ0AAAjAMESgE3X4Awe8PD1qYFlk18CXEAEDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGxIBCYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIAYEAyIAcGAGBAMiAHBgBgQDIgBwYAYEAyIAcGAGBAMiAHBgBgQDIgB4bYVGiyFMIpOQgAAAABJRU5ErkJggg==",
+    "responses": [
+      {
+        "nodes": [
+          {
+            "role": "textbox",
+            "name": "Name"
+          },
+          {
+            "role": "button",
+            "name": "Save"
+          }
+        ]
+      },
+      {
+        "matched": true,
+        "matchCount": 1
+      },
+      {
+        "typedChars": 10
+      },
+      {
+        "clicked": true
+      },
+      {
+        "waitedMs": 25
+      },
+      {
+        "bytes": 247
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "computer_inspect",
+      "maxNodes": 20
+    },
+    {
+      "type": "computer_assert",
+      "role": "button",
+      "name": "Save"
+    },
+    {
+      "type": "computer_type",
+      "selector": "#name",
+      "text": "ForgePilot",
+      "secret": false
+    },
+    {
+      "type": "computer_click",
+      "selector": "#save"
+    },
+    {
+      "type": "computer_wait",
+      "ms": 25
+    },
+    {
+      "type": "computer_screenshot",
+      "path": "final.png"
+    }
+  ],
+  "verify": []
+}

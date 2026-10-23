@@ -88,7 +88,15 @@ function actionSchema() {
     return `Allowed action shapes:\n` +
         `- {"type":"write_file","path":"relative/path","content":"full file content"}\n` +
         `- {"type":"replace_text","path":"relative/path","find":"exact existing text","replace":"replacement text","expectedOccurrences":1}\n` +
-        `- {"type":"run_command","command":"node","args":["file.js"],"expectExitCode":0}\n`;
+        `- {"type":"run_command","command":"node","args":["file.js"],"expectExitCode":0}\n` +
+        `- {"type":"computer_navigate","url":"http://127.0.0.1:3000"}\n` +
+        `- {"type":"computer_inspect","maxNodes":200}\n` +
+        `- {"type":"computer_assert","role":"button","name":"Save"}\n` +
+        `- {"type":"computer_click","selector":"#save"}\n` +
+        `- {"type":"computer_type","selector":"#name","text":"value","secret":true}\n` +
+        `- {"type":"computer_key","key":"Enter"}\n` +
+        `- {"type":"computer_wait","ms":250}\n` +
+        `- {"type":"computer_screenshot","path":"final.png"}\n`;
 }
 
 function safetyRules() {

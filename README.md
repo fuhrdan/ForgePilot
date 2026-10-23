@@ -1,254 +1,140 @@
-# ForgePilot v0.7.0
+# ForgePilot v0.8.0
 
-**A local-first software-engineering agent that separates planning, implementation, debugging, review, and verification—and proves the result with executable evidence.**
+**A local-first verified software-engineering agent that can now operate a persistent browser/IDE session and leave a replayable evidence trail.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, independent verification, disposable Docker/Podman execution, visual application verification, and in v0.7 a **five-role engineering team** with enforced separation of duties.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, and in v0.8 a guarded **Computer / IDE Control** layer.
 
 ## Requirements
 
 - Node.js 22+
 - Git recommended
-- Docker or Podman optional for `--sandbox`
-- Ollama optional for local-AI roles
-- A multimodal Ollama model optional for visual `vision` assertions
-- Chromium/Chrome optional for command-driven web screenshots
+- Docker/Podman optional for `--sandbox`
+- Ollama optional for local AI roles and multimodal visual checks
+- Chromium/Chrome or another CDP-enabled Electron application optional for real computer control
 
-ForgePilot has no npm runtime dependencies.
+There are no npm runtime dependencies.
 
 ## Quick start
 
 ```powershell
 npm test
 node src/cli.js doctor
-node src/cli.js analyze . --goal "improve multi-agent verification"
+node src/cli.js analyze . --goal "fix the settings UI"
 ```
 
-Run the deterministic multi-agent demo:
+Run the deterministic v0.8 demo:
 
 ```powershell
-node src/cli.js run examples/multi-agent-task.json `
-  --workspace .\work\multi-agent-demo `
-  --agents `
+node src/cli.js run examples/computer-task.json `
+  --workspace .\work\computer-demo `
   --apply
 ```
 
-The Reviewer deliberately rejects the first result. The separate Implementer performs the requested revision, Reviewer approves the second pass, and the Verifier audits the deterministic evidence.
-
-## v0.7 engineering flow
+## v0.8 engineering flow
 
 ```text
 Repository + Goal
       |
       v
-Planner [READ ONLY]
+Planner [read-only]
       |
       v
-Implementer [proposes mutations]
+Implementer
+      |
+      +---- file / command actions ----> Guarded Executor
+      |
+      +---- computer actions ----------> Persistent GUI Session
+                                           | accessibility tree
+                                           | click / type / key
+                                           | screenshot evidence
+                                           | replayable trace
       |
       v
-Guarded Executor
+Reviewer [read-only]
+      |
+Tests / Build / Git / Visual / UI-state gates
       |
       v
-Reviewer [READ ONLY]
-    /    \
-approve  request changes
-   |          |
-   |          v
-   |      Implementer revision
-   |          |
-   +----------+
+Verifier [read-only]
       |
-      v
-Tests / Build / Git / Visual Verification
-      |
-      v
-Verifier [READ ONLY]
-    /    \
-approve  reject
-   |       |
-   |       v
-   |    Debugger [repair proposal]
-   |       |
-   +-------+ → bounded re-verification
-      |
-      v
-PASS + evidence report
+ PASS + evidence-backed report
 ```
 
-Agents never execute repository code directly. They return structured decisions or mutation proposals; ForgePilot's orchestrator applies policy and the guarded execution provider remains the only execution path.
+Computer actions use the same bounded failure/repair machinery as normal implementation actions. A failed selector, UI-state assertion, or browser action can feed concrete evidence to the Debugger and be retried within `maxRepairs`.
 
-## Separation of duties
+## Computer / IDE actions
 
-| Role | Responsibility | Mutation authority |
-| --- | --- | --- |
-| Planner | Strategy, risks, acceptance criteria | None |
-| Implementer | Initial implementation and review revisions | May propose guarded actions |
-| Debugger | Failure-driven repair | May propose guarded actions |
-| Reviewer | Review changed state and request corrections | None |
-| Verifier | Audit deterministic evidence | None |
-
-Reviewer and Verifier responses are scanned for mutation payloads. A read-only role attempting to return `actions`, commands, patches, replacement content, or an action-shaped object fails closed.
-
-## Enable/disable the team
-
-Ollama tasks use the agent team by default in v0.7:
-
-```powershell
-node src/cli.js run task.json --planner ollama --model qwen2.5-coder:7b --apply
+```json
+{"type":"computer_navigate","url":"http://localhost:3000"}
+{"type":"computer_inspect","maxNodes":200}
+{"type":"computer_assert","role":"button","name":"Save"}
+{"type":"computer_click","selector":"#save"}
+{"type":"computer_type","selector":"#name","text":"value"}
+{"type":"computer_key","key":"Enter"}
+{"type":"computer_wait","ms":250}
+{"type":"computer_screenshot","path":"final.png"}
 ```
 
-Disable it when comparing against the legacy single-planner path:
-
-```text
---no-agents
-```
-
-Scripted tasks remain opt-in:
-
-```text
---agents
-```
-
-or:
+Configure a real CDP session with:
 
 ```json
 {
-  "agentTeam": {
+  "computer": {
     "enabled": true,
-    "maxReviewRounds": 2,
-    "requireVerifierApproval": true
+    "driver": "cdp",
+    "endpoint": "http://127.0.0.1:9222",
+    "targetHint": "My App",
+    "allowedOrigins": ["http://localhost", "http://127.0.0.1"]
   }
 }
 ```
 
-## Different local models for different roles
+CLI overrides include `--computer`, `--computer-driver`, `--computer-endpoint`, and `--computer-target`.
 
-You can run all roles on one model or specialize them:
+## Computer-control safety
 
-```json
-{
-  "planner": "ollama",
-  "model": "qwen2.5-coder:7b",
-  "agentTeam": {
-    "models": {
-      "planner": "qwen2.5-coder:7b",
-      "implementer": "qwen2.5-coder:14b",
-      "debugger": "qwen2.5-coder:14b",
-      "reviewer": "qwen2.5-coder:7b",
-      "verifier": "qwen2.5-coder:7b"
-    }
-  }
-}
-```
+- localhost-only navigation by default;
+- explicit allowlist required for external origins;
+- current-tab origin is validated before inspection/interaction;
+- `data:` URLs require explicit opt-in;
+- file URLs stay inside the workspace;
+- typed text is redacted from traces unless `secret:false` is explicit;
+- screenshot paths cannot escape the evidence directory;
+- Planner/Reviewer/Verifier cannot return GUI actions;
+- real GUI control and `--sandbox` are intentionally not combinable in v0.8 because a host IDE could bypass sandbox promotion.
 
-CLI overrides:
+Evidence is stored under:
 
 ```text
---implementer-model MODEL
---debugger-model MODEL
---reviewer-model MODEL
---verifier-model MODEL
+.forgepilot/computer/<task-id>/
+    trace.json
+    *.png
 ```
 
-## Bounded disagreement
+## Multi-agent separation
 
-Reviewer change requests do not loop forever. `maxReviewRounds` limits Implementer revision rounds independently from the Debugger's `maxRepairs` budget.
+The v0.7 guarantees remain: Planner, Reviewer, and Verifier are read-only; Implementer and Debugger may only *propose* mutations; the orchestrator executes them through guarded providers. Reviewer revision rounds and Debugger repairs have separate budgets.
 
-A required Verifier rejection becomes a failed `agent_verifier` check. It can trigger a bounded Debugger repair, after which deterministic verification and a fresh Verifier audit run again.
+## Test-first + visual verification
 
-Set:
-
-```json
-{ "agentTeam": { "requireVerifierApproval": false } }
-```
-
-if you want the model verifier to be advisory while deterministic gates remain authoritative.
-
-## Test-first engineering
-
-The v0.4 guarantees remain intact:
+The v0.4–v0.6 guarantees remain:
 
 ```text
 AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD
 ```
 
-RED must fail for the expected reason. RED-proven tests are hashed and protected from Implementer/Debugger modification.
+RED must fail for the expected reason and RED-proven tests remain immutable. PNG baselines are frozen before implementation, deterministic pixel/region checks remain available, and optional local vision verdicts cannot override failed deterministic gates.
 
 ## Disposable sandbox
-
-Use:
 
 ```powershell
 node src/cli.js run task.json --sandbox --apply
 ```
 
-Repository execution occurs against a disposable copy through Docker/Podman. Defaults remain:
+Repository command execution uses a disposable copy with no network by default, CPU/RAM/PID limits, dropped capabilities, and PASS-only promotion. v0.8 intentionally fails closed if real computer control is requested at the same time.
 
-```text
-network       none
-CPUs          2
-memory        2g
-PID limit     256
-capabilities  ALL dropped
-privileges    no-new-privileges
-image pull    never
-```
+## Reports
 
-Only PASS results are promoted to the original workspace.
+Reports live under `.forgepilot/runs/<timestamp>/` and include repository metadata, RED/GREEN/build evidence, visual evidence, Git attribution, repair attempts, agent handoffs/verdicts, and now the computer-session driver, action counts, trace path, and screenshot evidence directory.
 
-## Visual verification
-
-A task may capture PNG evidence and require:
-
-- dimensions
-- pixel diffs against frozen baselines
-- pixel probes
-- region averages
-- optional local multimodal vision verdicts
-
-Direct comparison remains available:
-
-```powershell
-node src/cli.js compare-images actual.png baseline.png `
-  --channel-threshold 2 `
-  --max-changed-ratio 0.005
-```
-
-## Evidence reports
-
-Reports live under:
-
-```text
-.forgepilot/runs/<timestamp>/
-    report.json
-    report.md
-```
-
-v0.7 reports include:
-
-- detected projects and selected repository context metadata;
-- test-first RED/GREEN/build evidence;
-- visual evidence metadata;
-- Git diff and unexpected-file classification;
-- repair attempts;
-- Planner → Implementer → Reviewer → Verifier handoffs;
-- review findings and revision rounds;
-- verifier audits;
-- role-policy violations;
-- role model identifiers.
-
-Source excerpts used by local models remain transient rather than being copied into the report.
-
-## Safety model
-
-- No shell-string execution.
-- Executables remain allowlisted.
-- Writes are constrained to the selected workspace.
-- Network is disabled by default in sandbox mode.
-- Checked-in visual baselines and RED-proven tests are protected.
-- Reviewer and Verifier are read-only by policy.
-- Review and repair loops are bounded independently.
-- Agents cannot directly commit or push.
-- PASS is still controlled by ForgePilot's deterministic state/evidence, not by an agent saying “done.”
-
-See `docs/MULTI_AGENT.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md` for the full design.
+See `docs/COMPUTER_CONTROL.md`, `docs/MULTI_AGENT.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md`.

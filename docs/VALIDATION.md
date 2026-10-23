@@ -1,74 +1,44 @@
-# ForgePilot v0.7 Validation
+# ForgePilot v0.8 Validation
 
 ## Automated suite
 
-Run:
+Release acceptance requires **63/63 tests**. v0.8 adds 12 computer-control tests on top of the 51 v0.7 tests, covering:
 
-```text
-npm test
-```
+- read-only agent rejection of computer actions;
+- localhost/external-origin policy;
+- current-target origin enforcement;
+- secret typing redaction;
+- screenshot path confinement;
+- action routing through a persistent session;
+- GUI failure → bounded repair → retry;
+- selector-to-coordinate mouse dispatch;
+- bounded accessibility capture;
+- accessibility assertions as pass/fail gates;
+- CDP navigation `errorText` fail-closed behavior;
+- sandbox export of computer trace/screenshot evidence.
 
-Release acceptance requires **51/51 tests**: all legacy v0.1–v0.6 coverage plus 8 v0.7 multi-agent tests.
+## Real Chromium acceptance
 
-v0.7 adds coverage for:
+A release candidate must also connect to a real Chromium remote-debugging endpoint and successfully perform at minimum:
 
-- read-only role-policy enforcement;
-- Planner → Implementer structured handoffs;
-- Reviewer request-changes → Implementer revision → Reviewer approval;
-- malicious Reviewer mutation payload rejection without execution;
-- Verifier rejection → Debugger repair → independent re-audit;
-- review-round budget enforcement independent of repair budget;
-- Ollama structured role prompts for Planner, Implementer, Reviewer, and Verifier;
-- preservation of the existing 43 v0.1–v0.6 tests.
+1. persistent CDP connection;
+2. accessibility inspection;
+3. accessibility assertion;
+4. screenshot capture;
+5. trace generation;
+6. normal task report generation.
 
-## Multi-agent CLI acceptance
-
-Run:
-
-```powershell
-mkdir work\multi-agent-demo
-node src/cli.js run examples/multi-agent-task.json `
-  --workspace .\work\multi-agent-demo `
-  --agents `
-  --apply
-```
-
-Acceptance requires:
-
-1. Planner and Implementer handoffs are recorded;
-2. initial `release-note.txt` contains `DRAFT`;
-3. Reviewer round 1 requests changes;
-4. Reviewer never executes a mutation itself;
-5. Implementer revision replaces `DRAFT` with `VERIFIED`;
-6. Reviewer round 2 approves;
-7. deterministic file-content checks pass;
-8. Verifier approves the evidence;
-9. final result is PASS;
-10. Markdown/JSON reports include handoffs, reviews, verifier audit, and zero policy violations.
-
-## Read-only attack acceptance
-
-The automated suite supplies a Reviewer verdict containing a hidden `write_file` action. Acceptance requires ForgePilot to:
-
-- reject the verdict as a role-policy violation;
-- not create the requested malicious file;
-- fail the task closed.
-
-## Legacy acceptance
-
-The v0.6 visual failure→repair demo and direct `compare-images` PASS/FAIL checks remain part of regression acceptance. Sandboxed execution-provider tests remain required even when Docker/Podman is unavailable on the build host.
+Mouse/keyboard/selector dispatch are additionally covered by deterministic CDP-client tests. If the build environment applies enterprise browsing policy, network navigation may be blocked by Chromium; ForgePilot must surface the browser `errorText` as a failure rather than report navigation PASS.
 
 ## Archive acceptance
 
-Before release:
-
 1. syntax-check every `.js` file;
-2. run the complete test suite in the working tree;
-3. run the multi-agent CLI reviewer→revision→verifier acceptance;
-4. verify CLI version prints `0.7.0`;
-5. verify report output includes the Multi-Agent Engineering section;
-6. create the ZIP;
-7. extract the exact ZIP to a clean directory;
-8. rerun the complete test suite from the extracted archive;
-9. rerun the multi-agent CLI acceptance from the extracted archive;
-10. verify no transient `.forgepilot/`, `work/`, or `node_modules/` state is included in the release archive.
+2. run all 63 tests in the working tree;
+3. run the deterministic replay CLI demo;
+4. run the real Chromium CDP acceptance when Chromium is available;
+5. verify CLI version `0.8.0`;
+6. verify report includes the Computer / IDE Control section;
+7. create ZIP + SHA-256;
+8. extract the exact ZIP into a clean directory;
+9. rerun all 63 tests and replay demo from the extracted archive;
+10. verify no transient `.forgepilot/`, `work/`, `node_modules/`, or smoke-test state is included.

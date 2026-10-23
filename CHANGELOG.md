@@ -1,28 +1,30 @@
 # Changelog
 
-## 0.7.0 — Multi-Agent Engineering Team
+## 0.8.0 — Computer / IDE Control
 
 ### Added
-- Separated Planner, Implementer, Debugger, Reviewer, and Verifier roles.
-- `AgentTeam` coordinator with structured handoff audit trail.
-- Read-only role-policy enforcement for Planner, Reviewer, and Verifier.
-- Bounded Reviewer → Implementer change-request rounds.
-- Independent Verifier gate that can feed evidence into the existing bounded Debugger loop.
-- Role-specific Ollama model selection through `agentTeam.models` and CLI overrides.
-- Multi-agent evidence in JSON/Markdown reports: role models, handoffs, review verdicts, verifier audits, and policy violations.
-- `--agents`, `--no-agents`, and `--max-review-rounds` CLI controls.
-- `--implementer-model`, `--debugger-model`, `--reviewer-model`, and `--verifier-model` CLI controls.
-- `docs/MULTI_AGENT.md` and a deterministic multi-agent reviewer/revision demo.
+- Persistent `ComputerSession` with ordered interaction trace and screenshot evidence.
+- Real Chrome DevTools Protocol driver for Chromium/Chrome and CDP-enabled Electron targets.
+- Deterministic replay driver for CI and regression tests.
+- `computer_navigate`, `computer_inspect`, `computer_assert`, `computer_click`, `computer_type`, `computer_key`, `computer_wait`, and `computer_screenshot` actions.
+- Accessibility-tree inspection and accessibility state assertions.
+- CSS-selector click/type support plus coordinate clicking and keyboard dispatch.
+- Screenshot capture to `.forgepilot/computer/<task-id>/` and computer evidence in reports.
+- CLI controls: `--computer`, `--computer-driver`, `--computer-endpoint`, `--computer-target`.
+- `docs/COMPUTER_CONTROL.md` and deterministic replay demo.
 
 ### Changed
-- Ollama tasks use multi-agent mode by default; scripted tasks remain opt-in for backward compatibility.
-- Planner in multi-agent mode returns read-only strategy before a separate Implementer produces mutations.
-- Debugging uses the dedicated Debugger role while preserving the v0.2 bounded repair budget.
-- Final deterministic/visual verification is followed by a read-only Verifier audit when multi-agent mode is enabled.
-- Checkpoint schema version advanced to 6 to retain multi-agent evidence.
+- Computer-action failures participate in the bounded v0.2 repair/retry loop.
+- Ollama Implementer/Debugger action schema includes computer-control actions.
+- Sandbox evidence export supports computer traces/screenshots in addition to visual evidence.
+- `doctor` now probes common Chromium and VS Code executables.
 
 ### Safety
-- Reviewer/Verifier mutation payloads fail closed and are never executed.
-- Deterministic test/build/Git/visual failures cannot be overridden by an approving model Verifier.
-- Handoff logs store bounded summaries, not repository source excerpts.
-- Existing protected RED tests, visual baselines, executable allowlists, sandbox limits, and PASS-only promotion remain enforced.
+- Navigation is localhost-only by default and external origins require explicit allowlisting.
+- Existing target URLs are validated before inspection/interaction, preventing an already-open external tab from bypassing navigation policy.
+- `data:` navigation is opt-in and file navigation is workspace-confined.
+- Typed values are redacted from traces by default.
+- Computer screenshot paths are evidence-directory confined.
+- Planner/Reviewer/Verifier cannot smuggle computer-control actions through read-only verdicts.
+- Real computer control is blocked when `--sandbox` is active in v0.8 because a host IDE could bypass PASS-only promotion.
+- CDP navigation fails when the browser reports `errorText`; it cannot be recorded as a false PASS.
