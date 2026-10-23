@@ -11,8 +11,11 @@ import { writeReport } from "./report.js";
 import { buildRepositoryContext } from "./repository/context.js";
 import { createExecutionProvider, detectContainerRuntime, HostExecutionProvider } from "./sandbox/provider.js";
 import { createSandboxSession } from "./sandbox/session.js";
+import { OllamaVisionProvider } from "./visual/ollama.js";
+import { decodePng } from "./visual/png.js";
+import { compareImages } from "./visual/diff.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -21,10 +24,14 @@ function usage() {
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--max-repairs N] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
+`  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Sandbox (v0.5):\n` +
+`Visual verification (v0.6):\n` +
+`  task.visual can capture PNG screenshots, compare baselines, probe pixels/regions, and optionally ask a local Ollama vision model for a verdict.\n` +
+`  Checked-in visual baselines are frozen before implementation and cannot be modified by implementation/repair actions.\n\n` +
+`Sandbox (v0.5+):\n` +
 `  --sandbox runs build/test commands inside Docker/Podman against a disposable repository copy.\n` +
 `  Network defaults to none; CPU/RAM/PID limits are enforced; verified changes are promoted on PASS only.\n\n` +
 `Repair loop:\n` +
@@ -56,7 +63,7 @@ function parseOptions(args) {
 }
 
 async function doctor() {
-    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "docker", "podman"];
+    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "chromium", "google-chrome", "docker", "podman"];
     console.log(`ForgePilot v${VERSION} doctor\n`);
     for (const tool of tools) {
         const found = await commandExists(tool);
@@ -89,6 +96,18 @@ function buildPlanner(plannerName, task, options) {
     throw new Error(`Unknown planner: ${plannerName}`);
 }
 
+function buildVisionProvider(task, options) {
+    const provider = task.visual?.provider ?? {};
+    const model = options["vision-model"] ?? provider.model;
+    if (!model) return null;
+    const type = String(provider.type ?? "ollama").toLowerCase();
+    if (type !== "ollama") throw new Error(`Unsupported vision provider: ${type}`);
+    return new OllamaVisionProvider({
+        model,
+        baseUrl: options["vision-url"] ?? provider.baseUrl ?? "http://127.0.0.1:11434"
+    });
+}
+
 
 function repositoryReportSummary(repository) {
     if (!repository) return null;
@@ -117,6 +136,7 @@ async function runTask(taskFile, options) {
 
     const plannerName = options.planner ?? task.planner ?? "scripted";
     const planner = buildPlanner(plannerName, task, options);
+    const visionProvider = buildVisionProvider(task, options);
     const taskId = createTaskId(taskPath, task);
     const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? 2));
     if (!Number.isFinite(maxRepairs)) throw new Error("--max-repairs must be a number.");
@@ -128,7 +148,7 @@ async function runTask(taskFile, options) {
     let sandboxSession = null;
     let workingWorkspace = originalWorkspace;
     let executionProvider = new HostExecutionProvider();
-    let sandboxInfo = { enabled: sandboxEnabled, provider: executionProvider.describe(), promoted: false, promotedChanges: [], artifacts: [] };
+    let sandboxInfo = { enabled: sandboxEnabled, provider: executionProvider.describe(), promoted: false, promotedChanges: [], artifacts: [], visualEvidence: [] };
 
     if (sandboxEnabled && options.apply) {
         sandboxSession = await createSandboxSession(originalWorkspace, {
@@ -177,7 +197,8 @@ async function runTask(taskFile, options) {
             maxRepairs,
             taskId,
             resumeState,
-            executionProvider
+            executionProvider,
+            visionProvider
         });
 
         console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
@@ -189,6 +210,8 @@ async function runTask(taskFile, options) {
         status = !options.apply ? "PLANNED" : (!actionFailure && outcome.verification.passed ? "PASS" : "FAIL");
 
         if (sandboxSession) {
+            const visualArtifacts = Array.isArray(outcome.visual?.evidencePaths) ? outcome.visual.evidencePaths : [];
+            sandboxInfo.visualEvidence = await sandboxSession.exportEvidence(visualArtifacts);
             sandboxInfo.artifacts = await sandboxSession.exportArtifacts(Array.isArray(rawSandbox.artifacts) ? rawSandbox.artifacts : []);
             if (status === "PASS") {
                 sandboxInfo.promotedChanges = await sandboxSession.promote();
@@ -214,6 +237,8 @@ async function runTask(taskFile, options) {
             repository: repositoryReportSummary(outcome.repository),
             testFirst: outcome.testFirst,
             coverage: outcome.coverage,
+            visual: outcome.visual ?? outcome.verification.visual ?? null,
+            visionProvider: visionProvider?.describe?.() ?? null,
             sandbox: sandboxInfo
         };
 
@@ -265,6 +290,25 @@ async function analyzeRepository(workspaceArg, options) {
     for (const file of repository.selectedFiles) console.log(`  - ${file.path} (score ${file.score})`);
 }
 
+async function compareImagesCommand(actualArg, baselineArg, options) {
+    if (!actualArg || !baselineArg) throw new Error("compare-images requires <actual.png> <baseline.png>.");
+    const actual = await decodePng(path.resolve(actualArg));
+    const baseline = await decodePng(path.resolve(baselineArg));
+    const metrics = compareImages(actual, baseline, { channelThreshold: Number(options["channel-threshold"] ?? 0) });
+    const maxChangedRatio = Number(options["max-changed-ratio"] ?? 0);
+    const passed = metrics.comparable && metrics.changedRatio <= maxChangedRatio;
+    console.log(`ForgePilot v${VERSION} visual comparison`);
+    console.log(`Actual:   ${path.resolve(actualArg)} (${actual.width}x${actual.height})`);
+    console.log(`Baseline: ${path.resolve(baselineArg)} (${baseline.width}x${baseline.height})`);
+    console.log(`Comparable: ${metrics.comparable ? "yes" : "no"}`);
+    console.log(`Changed pixels: ${metrics.changedPixels ?? "n/a"}/${metrics.totalPixels ?? "n/a"}`);
+    console.log(`Changed ratio: ${metrics.changedRatio}`);
+    console.log(`Mean delta: ${metrics.meanDelta}`);
+    console.log(`RMS delta: ${metrics.rmsDelta}`);
+    console.log(`Result: ${passed ? "PASS" : "FAIL"}`);
+    if (!passed) process.exitCode = 2;
+}
+
 async function main() {
     const [command, ...rest] = process.argv.slice(2);
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
@@ -288,6 +332,11 @@ async function main() {
     if (command === "analyze") {
         const { options, positionals } = parseOptions(rest);
         return analyzeRepository(positionals[0] ?? ".", options);
+    }
+
+    if (command === "compare-images") {
+        const { options, positionals } = parseOptions(rest);
+        return compareImagesCommand(positionals[0], positionals[1], options);
     }
 
     if (command === "run") {

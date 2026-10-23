@@ -5,6 +5,12 @@ import { saveState } from "../core/state.js";
 import { buildRepositoryContext } from "../repository/context.js";
 import { captureGitBaseline, summarizeGitDiff } from "../repository/git-diff.js";
 import { collectCoverage } from "../testing/coverage.js";
+import {
+    captureVisualBaselineSnapshot,
+    normalizeVisual,
+    verifyVisualPlan,
+    visualBaselinePaths
+} from "../visual/workflow.js";
 import { discoverTesting } from "../testing/discovery.js";
 import {
     actionTouchesProtectedTest,
@@ -45,7 +51,7 @@ async function executeRepairActions(repairPlan, workspace, apply, protectedPaths
                 type: action.type,
                 status: "failed",
                 path: action.path,
-                error: "Repair attempted to modify a RED-proven test. Test files are immutable during implementation."
+                error: "Repair attempted to modify a protected RED-proven test or visual baseline. Protected evidence is immutable during implementation."
             });
             break;
         }
@@ -66,7 +72,7 @@ function verificationOptions(task, gitBaseline, executionProvider = null) {
     };
 }
 
-async function verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider = null) {
+async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider = null, visionProvider = null, taskId = "task") {
     const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline, executionProvider));
     if (testSnapshot) {
         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
@@ -79,6 +85,15 @@ async function verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testS
         });
         verification.passed = verification.passed && integrity.passed;
     }
+
+    const visualEvidence = await verifyVisualPlan(visual, workspace, {
+        apply: true, executionProvider, visionProvider, taskId, baselineSnapshot: visualBaselineSnapshot
+    });
+    for (const check of visualEvidence.checks) {
+        verification.checks.push({ ...check, index: verification.checks.length, phase: "visual" });
+    }
+    verification.passed = verification.passed && visualEvidence.passed;
+    verification.visual = visualEvidence;
     return verification;
 }
 
@@ -102,7 +117,8 @@ export async function runTaskWithRepairs({
     maxRepairs = 2,
     taskId,
     resumeState = null,
-    executionProvider = null
+    executionProvider = null,
+    visionProvider = null
 }) {
     const initialContext = await contextFor(workspace, task);
     const planned = resumeState?.plan ?? await planner.plan(task, initialContext);
@@ -117,8 +133,10 @@ export async function runTaskWithRepairs({
         { goal: task.goal ?? "", sourcePaths: intendedSourcePaths }
     );
     const testFirst = normalizeTestFirst(planned, initialContext.repository, task);
+    const visual = normalizeVisual(planned, task);
     const plan = testFirst ? appendEngineeringGates(planned, testFirst) : planned;
     const gitBaseline = resumeState?.gitBaseline ?? await captureGitBaseline(workspace);
+    const visualBaselineSnapshot = resumeState?.visualBaselineSnapshot ?? await captureVisualBaselineSnapshot(visual, workspace);
 
     if (!apply) {
         const testAuthoring = testFirst ? await executeTestAuthoring(testFirst, workspace, { apply: false, executionProvider }) : [];
@@ -129,16 +147,20 @@ export async function runTaskWithRepairs({
             expectedChangePaths: task.expectedChangePaths ?? [],
             executionProvider
         });
+        const visualEvidence = await verifyVisualPlan(visual, workspace, { apply: false, taskId, baselineSnapshot: visualBaselineSnapshot });
+        for (const check of visualEvidence.checks) verification.checks.push({ ...check, index: verification.checks.length, phase: "visual" });
+        verification.visual = visualEvidence;
         return {
             plan, actions, verification, repairs: [], repairCount: 0, resumed: false,
             repository: initialContext.repository,
             testFirst: testFirst ? { enabled: true, authoring: testAuthoring, red: null, testOnlyDiff: null } : null,
+            visual: visualEvidence,
             coverage: { available: false }
         };
     }
 
     let state = resumeState ?? {
-        version: 4,
+        version: 5,
         taskId,
         planner: plannerName,
         plan,
@@ -151,17 +173,21 @@ export async function runTaskWithRepairs({
         createdAt: new Date().toISOString(),
         lastFailure: null,
         testFirst: null,
-        testSnapshot: null
+        testSnapshot: null,
+        visualBaselineSnapshot
     };
 
     state.status = "running";
     state.plan = plan;
     state.gitBaseline = gitBaseline;
+    state.visualBaselineSnapshot = visualBaselineSnapshot;
     state = await saveState(workspace, state);
 
     let testFirstEvidence = state.testFirst ?? null;
     let testSnapshot = state.testSnapshot ?? null;
-    let protectedPaths = testFirst ? protectedTestPaths(testFirst) : [];
+    const protectedTestFiles = testFirst ? protectedTestPaths(testFirst) : [];
+    const protectedVisualBaselines = visualBaselinePaths(visual);
+    let protectedPaths = [...new Set([...protectedTestFiles, ...protectedVisualBaselines])];
 
     if (testFirst && !testFirstEvidence?.red?.validRed) {
         const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true, executionProvider });
@@ -201,7 +227,7 @@ export async function runTaskWithRepairs({
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
-        testSnapshot = await captureProtectedTestSnapshot(workspace, protectedPaths);
+        testSnapshot = await captureProtectedTestSnapshot(workspace, protectedTestFiles);
         state = await saveState(workspace, { ...state, testFirst: testFirstEvidence, testSnapshot, lastFailure: null });
     }
 
@@ -214,7 +240,7 @@ export async function runTaskWithRepairs({
         const action = plan.actions[actionIndex];
         let result;
         if (actionTouchesProtectedTest(action, protectedPaths)) {
-            result = { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a RED-proven test." };
+            result = { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a protected RED-proven test or visual baseline." };
         } else {
             result = await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider });
         }
@@ -248,7 +274,7 @@ export async function runTaskWithRepairs({
 
                 if (repairActionsPassed && repairPlan.actions.length > 0) {
                     result = actionTouchesProtectedTest(action, protectedPaths)
-                        ? { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a RED-proven test." }
+                        ? { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a protected RED-proven test or visual baseline." }
                         : await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider });
                     if (result.status === "passed" && testSnapshot) {
                         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
@@ -283,7 +309,7 @@ export async function runTaskWithRepairs({
         state = await saveState(workspace, { ...state, actionIndex: actionIndex + 1, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, lastFailure: null });
     }
 
-    let verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider);
+    let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId);
     while (!verification.passed && repairCount < maxRepairs) {
         repairCount++;
         const evidence = { kind: "verification", failedChecks: failedChecks(verification) };
@@ -300,7 +326,7 @@ export async function runTaskWithRepairs({
         repairs.push(repairRecord);
 
         if (repairResults.every((item) => item.status === "passed") && repairPlan.actions.length > 0) {
-            verification = await verifyWithTestIntegrity(plan, workspace, task, gitBaseline, testSnapshot, executionProvider);
+            verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId);
             repairRecord.retry = { passed: verification.passed, failedChecks: failedChecks(verification) };
         }
 
@@ -329,5 +355,5 @@ export async function runTaskWithRepairs({
         lastFailure: verification.passed ? null : { kind: "verification", failedChecks: failedChecks(verification) }
     });
 
-    return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage };
+    return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: verification.visual ?? { enabled: false, passed: true, checks: [], evidencePaths: [] }, coverage };
 }

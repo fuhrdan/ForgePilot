@@ -103,6 +103,23 @@ export async function createSandboxSession(originalWorkspace, { taskId = "task",
             }
             return exported;
         },
+        async exportEvidence(paths = []) {
+            const exported = [];
+            for (const relative of paths) {
+                const normalized = String(relative).replaceAll("\\", "/");
+                if (!normalized.startsWith(".forgepilot/visual/")) continue;
+                const src = resolveInside(workspace, normalized);
+                try {
+                    const stat = await fs.stat(src);
+                    const dest = resolveInside(original, normalized);
+                    await fs.mkdir(path.dirname(dest), { recursive: true });
+                    if (stat.isDirectory()) await fs.cp(src, dest, { recursive: true });
+                    else await fs.copyFile(src, dest);
+                    exported.push({ path: normalized, destination: dest });
+                } catch { /* missing evidence is reported by omission */ }
+            }
+            return exported;
+        },
         async close({ preserve = keep } = {}) {
             if (closed) return;
             closed = true;

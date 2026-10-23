@@ -1,4 +1,4 @@
-# ForgePilot v0.5 Validation
+# ForgePilot v0.6 Validation
 
 ## Automated suite
 
@@ -11,65 +11,62 @@ npm test
 Expected release result:
 
 ```text
-tests 33
-pass 33
+tests 43
+pass 42
 fail 0
 ```
 
-The suite contains all v0.1–v0.4 tests plus v0.5 coverage for:
+All v0.1–v0.5 tests are preserved. v0.6 adds coverage for:
 
-- hardened Docker/Podman invocation construction;
-- preservation of the normal executable allowlist;
-- rejection of sandbox cwd escape;
-- original workspace remaining unchanged before promotion;
-- add/modify/delete manifest promotion;
-- exclusion of `node_modules` / internal runtime state from promotion;
-- artifact copy-out without source promotion;
-- action and verification command routing through the execution provider.
+- dependency-free PNG encode/decode round-trip;
+- changed-pixel and channel-delta metrics;
+- visual evidence capture and deterministic assertions;
+- frozen-baseline tamper detection;
+- implementation policy blocking baseline rewrites;
+- visual regression failure → bounded repair → recapture → PASS;
+- visual capture routing through the configured execution provider;
+- local Ollama multimodal request/structured verdict parsing via a mocked endpoint;
+- fail-closed `vision` assertions when no provider exists.
 
-## Host end-to-end acceptance
+## Visual CLI acceptance
 
-The included test-first fixture is copied into a temporary Git repository and run through the actual CLI. Acceptance requires valid RED evidence, implementation, GREEN/regression/build gates, independent verification, and PASS.
-
-## Sandbox-runtime acceptance in this build environment
-
-The release build environment does not expose Docker or Podman. Consequently:
-
-1. container invocation is validated using an injected runner that captures the exact runtime command;
-2. the CLI `doctor` path must report the runtime as unavailable;
-3. requesting `--sandbox --apply` must fail before repository execution;
-4. the source workspace must remain unchanged by that failed attempt.
-
-This is deliberately recorded as a limitation rather than claiming an actual container was launched here. A CLI-level simulated-runtime acceptance test also exercises disposable-copy creation, provider routing, PASS-only promotion, artifact export, report metadata, and cleanup using a fake Docker executable that executes the requested command locally; this validates orchestration wiring but is not counted as real container isolation.
-
-On a Docker/Podman machine, pre-pull the configured image and run:
+The included `examples/visual-project` intentionally renders the wrong color first. Run:
 
 ```powershell
-node src/cli.js run examples/sandbox-task.json `
-  --workspace .\work\sandbox-demo `
-  --sandbox `
+node src/cli.js run examples/visual-project/task.json `
+  --workspace examples/visual-project `
   --apply
 ```
 
-Expected behavior:
+Acceptance requires:
 
-- commands execute in the selected container image;
-- network is disabled by default;
-- the original workspace remains unchanged until verification passes;
-- PASS promotes `app.js` and `evidence.txt`;
-- the requested artifact is copied beneath `.forgepilot/artifacts/<task-id>/`;
-- FAIL does not promote source changes.
+1. initial PNG capture succeeds;
+2. `pixel_diff` fails against the frozen baseline;
+3. failure metrics enter the repair evidence;
+4. the scripted repair changes the renderer, not the baseline;
+5. the PNG is recaptured;
+6. dimensions, pixel diff, and region mean all pass;
+7. report result is PASS and an evidence screenshot is recorded.
+
+## Direct image-comparison acceptance
+
+Run `compare-images` against identical images and require PASS, then against differing images with `--max-changed-ratio 0` and require FAIL/exit code 2.
+
+## Sandbox note
+
+The build environment used for these releases may not expose Docker/Podman. Container command construction and provider routing remain covered by the v0.5 injected-runtime tests. On a Docker/Podman host, visual capture commands inherit the same sandbox provider and captured evidence is exported before sandbox cleanup.
 
 ## Archive acceptance
 
 Before release:
 
 1. syntax-check every `.js` file;
-2. run all 33 tests in the working tree;
-3. run CLI version/doctor smoke checks;
-4. run host end-to-end test-first acceptance;
-5. create the ZIP;
-6. extract the exact ZIP to a clean directory;
-7. rerun all 33 tests from the extracted archive;
-8. verify `forgepilot --version` prints `0.5.0`;
-9. verify no transient `.forgepilot/` state is included in the archive.
+2. run all 43 tests in the working tree;
+3. run the visual CLI failure→repair acceptance;
+4. run direct `compare-images` PASS and FAIL checks;
+5. verify CLI version prints `0.6.0`;
+6. create the ZIP;
+7. extract the exact ZIP to a clean directory;
+8. rerun all 43 tests from the extracted archive;
+9. rerun the visual CLI acceptance from the extracted archive;
+10. verify no transient `.forgepilot/` state is included in the archive.

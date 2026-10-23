@@ -139,3 +139,21 @@ test("orchestration routes both action and verification commands through the exe
         { command: "node", args: ["verify.js"] }
     ]);
 });
+
+test("sandbox visual evidence exports to the host evidence path without source promotion", async () => {
+    const workspace = await tempWorkspace();
+    const session = await createSandboxSession(workspace, { taskId: "visual-evidence-task" });
+    try {
+        const relative = ".forgepilot/visual/visual-evidence-task/screen.png";
+        const source = path.join(session.workspace, ...relative.split("/"));
+        await fs.mkdir(path.dirname(source), { recursive: true });
+        await fs.writeFile(source, Buffer.from([1, 2, 3, 4]));
+        const exported = await session.exportEvidence([relative, "dist/not-visual.txt"]);
+        assert.equal(exported.length, 1);
+        const hostEvidence = path.join(workspace, ...relative.split("/"));
+        assert.deepEqual(await fs.readFile(hostEvidence), Buffer.from([1, 2, 3, 4]));
+        await assert.rejects(fs.access(path.join(workspace, "dist", "not-visual.txt")));
+    } finally {
+        await session.close();
+    }
+});

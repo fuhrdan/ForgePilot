@@ -1,4 +1,4 @@
-# ForgePilot v0.5 Architecture
+# ForgePilot v0.6 Architecture
 
 ```text
 Task / Goal
@@ -13,28 +13,32 @@ Test-first Controller (optional)
     v
 Execution Provider
    / \
-  /   \
 Host  Disposable Sandbox
        |-- Docker / Podman
        |-- network policy
        |-- CPU / RAM / PID limits
-       |-- command allowlist
-       |-- no-new-privileges
        v
 Guarded Executor / Test Gates / Repair Retries
     |
     v
+Visual Verification (optional)
+    |-- command-driven PNG capture
+    |-- evidence copy
+    |-- frozen-baseline pixel diff
+    |-- deterministic pixel/region assertions
+    |-- optional local vision provider
+    v
 Independent Verifier
     |
     v
-PASS? ---- no ----> discard sandbox source changes
+PASS? ---- no ----> structured failure evidence → bounded repair
   |
  yes
   v
-Promote manifest delta to original workspace
+Promote manifest delta (sandbox mode)
   |
   v
-Evidence Report + optional artifact copy-out
+Evidence Report + artifact / screenshot copy-out
 ```
 
 ## Trust boundaries
@@ -46,21 +50,30 @@ May propose structured edits and checks. It cannot execute code or declare succe
 In sandbox mode it copies the repository to a temporary workspace before execution. The host repository remains unchanged until PASS.
 
 ### Execution provider
-All repository code execution goes through one provider. Host mode uses the existing shell-free allowlisted runner. Container mode translates the same command specification into a hardened Docker/Podman invocation.
+All repository code execution goes through one provider. Visual capture commands use the same provider, preventing a sandboxed build from being followed by accidental host-side screenshot execution.
 
 ### Test-first controller
 Owns AUTHOR → RED → IMPLEMENT → GREEN sequencing and protects RED-proven tests from later modification.
 
+### Visual controller
+Fingerprints configured baseline PNGs before implementation. Baseline paths join the protected-evidence set and cannot be changed by implementation/repair actions. Captured screenshots are copied to ForgePilot-owned evidence paths before evaluation.
+
+### Deterministic visual verifier
+Decodes PNG pixels itself and computes reproducible metrics. It does not depend on the planner's description of the UI.
+
+### Vision provider
+Optional and independent from the planner. It receives the captured screenshot plus explicit visible criteria and must return a structured verdict. Provider failure or insufficient confidence fails the assertion.
+
 ### Verifier
-Reruns executable checks from actual state. In sandbox mode verification commands use the same container provider, while Git/file-policy inspection remains controlled by ForgePilot on the disposable workspace.
+Reruns executable checks from actual state and combines code/test evidence with visual evidence. Git/file-policy inspection remains controlled by ForgePilot.
 
 ### Promotion controller
-After PASS, compares pre-run and post-run manifests and copies only added/modified/deleted workspace files to the original workspace. `.forgepilot/` and `node_modules/` are excluded.
+After PASS, compares pre-run and post-run manifests and copies only added/modified/deleted workspace files to the original workspace. `.forgepilot/` and `node_modules/` remain excluded. Visual evidence is exported separately.
 
-## Why Git inspection stays outside the container
+## Visual failure repair
 
-Git diffing, scope checks, repository scanning, and policy decisions are ForgePilot control-plane operations. They inspect the disposable tree but do not execute repository application code, so they remain outside the untrusted execution provider.
+Visual checks are appended to normal verification. If they fail, the same bounded repair loop receives the failing check payload, including deterministic diff metrics or vision-model observations. After a source repair, ForgePilot recaptures the screenshot and independently reruns the visual assertions.
 
-## Failure behavior
+## Why v0.6 is not full computer use
 
-A failed containerized task may still export explicitly requested artifacts, but source changes are not promoted. This gives v0.5 rollback semantics without running destructive reset commands against the user's real repository.
+v0.6 can execute a trusted screenshot-generation command (including installed Chromium/Chrome) and verify the resulting image. It does not yet own persistent GUI processes, mouse coordinates, keyboard input, accessibility trees, or recorded interaction traces. Those capabilities remain separate so visual verification can be trustworthy before broader computer control is introduced.

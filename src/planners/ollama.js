@@ -63,6 +63,7 @@ function safetyRules() {
         `- Allowed commands are node, npm, npx, git, python, python3, pytest, go, java, javac, mvn, gradle, dotnet, cargo, rustc, godot, godot4.\n` +
         `- Verification must test the finished result rather than merely restating the actions.\n` +
         `- git_diff verification may be used to assert that only intended files changed.\n` +
+        `- Do not modify checked-in visual baseline images supplied by task.visual.\n` +
         `- Do not commit or push.\n`;
 }
 

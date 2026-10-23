@@ -1,0 +1,63 @@
+{
+  "goal": "Render the expected green status screen and prove it visually",
+  "maxRepairs": 1,
+  "actions": [],
+  "verify": [],
+  "visual": {
+    "checkpoints": [
+      {
+        "name": "status-screen",
+        "capture": {
+          "command": "node",
+          "args": [
+            "render.js"
+          ],
+          "path": "out/status.png"
+        },
+        "assertions": [
+          {
+            "type": "dimensions",
+            "width": 160,
+            "height": 90
+          },
+          {
+            "type": "pixel_diff",
+            "baseline": "baselines/status.png",
+            "maxChangedRatio": 0,
+            "maxMeanDelta": 0
+          },
+          {
+            "type": "region_mean",
+            "region": {
+              "x": 0,
+              "y": 0,
+              "width": 160,
+              "height": 90
+            },
+            "rgba": [
+              20,
+              180,
+              110,
+              255
+            ],
+            "tolerance": 0
+          }
+        ]
+      }
+    ]
+  },
+  "repairs": [
+    {
+      "rationale": "The visual evidence is red; update the renderer to emit the frozen green baseline state.",
+      "actions": [
+        {
+          "type": "replace_text",
+          "path": "render.js",
+          "find": "iVBORw0KGgoAAAANSUhEUgAAAKAAAABaCAYAAAA/xl1SAAAAvklEQVR42u3SMQ0AAAjAMLwgAuP4Awe8PD1qYFl01sCXEAEDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGxIBCYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIAYEAyIAcGAGBAMiAHBgBgQDIgBwYAYEAyIAcGAGBAMiAHBgBgQDIgB4bZkOmH+zU6gxgAAAABJRU5ErkJggg==",
+          "replace": "iVBORw0KGgoAAAANSUhEUgAAAKAAAABaCAYAAAA/xl1SAAAAvklEQVR42u3SMQ0AAAjAMESgE3X4Awe8PD1qYFlk18CXEAEDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGBANiQDAgBgQDYkAwIAYEA2JAMCAGxIBCYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIBgQAwIBsSAYEAMCAbEgGBADAgGxIAYEAyIAcGAGBAMiAHBgBgQDIgBwYAYEAyIAcGAGBAMiAHBgBgQDIgB4bYVGiyFMIpOQgAAAABJRU5ErkJggg==",
+          "expectedOccurrences": 1
+        }
+      ]
+    }
+  ]
+}

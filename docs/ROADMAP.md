@@ -20,7 +20,7 @@
 - False-green/wrong-RED protection and immutable RED-proven tests.
 - Coverage artifact ingestion.
 
-## v0.5 — Disposable sandboxes ✅ (this release)
+## v0.5 — Disposable sandboxes ✅
 - Host/container execution-provider abstraction.
 - Docker/Podman runtime detection.
 - Disposable repository copy for sandboxed APPLY runs.
@@ -32,11 +32,13 @@
 - Explicit artifact copy-out independent of source promotion.
 - Sandbox metadata in evidence reports.
 
-## v0.6 — Visual application verification
-- Launch desktop/web applications from controlled execution environments.
-- Screenshot capture and vision-provider abstraction.
-- Visual assertions and regression snapshots.
-- Basic UI interaction evidence.
+## v0.6 — Visual application verification ✅ (this release)
+- Command-driven PNG screenshot capture through the execution-provider boundary.
+- Frozen visual baselines with deterministic pixel/region assertions.
+- Visual failures feed the bounded repair/reverify loop.
+- Optional local Ollama multimodal vision-provider abstraction.
+- Evidence screenshot copy-out and direct image-comparison CLI.
+- Full mouse/keyboard computer use remains deferred to v0.8.
 
 ## v0.7 — Multi-agent roles
 - Planner, Implementer, Debugger, Reviewer, Verifier.

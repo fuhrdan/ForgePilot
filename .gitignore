@@ -1,7 +1,8 @@
 node_modules/
 .forgepilot/runs/
+.forgepilot/state/
 .forgepilot/workspaces/
+.forgepilot/artifacts/
+.forgepilot/visual/
 *.log
 .DS_Store
-
-.forgepilot/state/
