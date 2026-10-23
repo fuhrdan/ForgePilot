@@ -6,3 +6,6 @@ node_modules/
 .forgepilot/visual/
 *.log
 .DS_Store
+.forgepilot/keys/
+.forgepilot/recovery/
+.forgepilot/computer/

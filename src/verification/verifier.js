@@ -29,7 +29,9 @@ export async function verifyPlan(plan, workspace, {
     gitBaseline = null,
     expectedChangePaths = [],
     enforceGitScope = false,
-    executionProvider = null
+    executionProvider = null,
+    approvalManager = null,
+    secretStore = null
 } = {}) {
     const expectedPaths = expectedPathsFromPlan(plan, expectedChangePaths);
     const git = await getGitStatus(workspace);
@@ -65,15 +67,26 @@ export async function verifyPlan(plan, workspace, {
 
         if (check.type === "command" || check.type === "test_gate") {
             const cwd = resolveInside(workspace, check.cwd ?? ".");
+            try { approvalManager?.require("command_exec", { phase: check.phase ?? "verification", command: check.command }); }
+            catch (error) { checks.push({ index, type: check.type, phase: check.phase, status: "failed", error: error.message, code: error.code ?? "APPROVAL_REQUIRED" }); continue; }
             const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
-            const result = await runner({
+            let args;
+            let env;
+            try {
+                args = Array.isArray(check.args) ? check.args.map((value) => String(secretStore ? secretStore.resolveValue(value) : value)) : [];
+                env = secretStore ? secretStore.resolveEnv(check.env ?? {}) : Object.fromEntries(Object.entries(check.env ?? {}).map(([key, value]) => [key, String(value)]));
+                if (secretStore && (secretStore.containsReference(check.args) || secretStore.containsReference(check.env))) approvalManager?.require("secret_use", { phase: check.phase ?? "verification" });
+            } catch (error) { checks.push({ index, type: check.type, phase: check.phase, status: "failed", error: error.message, code: error.code ?? "SECRET_ERROR" }); continue; }
+            const resultRaw = await runner({
                 command: check.command,
-                args: Array.isArray(check.args) ? check.args.map(String) : [],
+                args,
+                env,
                 cwd,
                 timeoutMs: Number(check.timeoutMs ?? 120000)
             });
+            const result = secretStore ? secretStore.redactObject(resultRaw) : resultRaw;
             const expectedExit = Number(check.expectExitCode ?? 0);
-            const exitOkay = result.exitCode === expectedExit && !result.timedOut;
+            const exitOkay = resultRaw.exitCode === expectedExit && !resultRaw.timedOut;
             const stdoutOkay = check.stdoutIncludes === undefined || result.stdout.includes(String(check.stdoutIncludes));
             const stderrOkay = check.stderrIncludes === undefined || result.stderr.includes(String(check.stderrIncludes));
             checks.push({

@@ -30,6 +30,23 @@ function renderMarkdown(report) {
         ""
     ];
 
+    if (report.profile) {
+        lines.push("## Product Profile", "");
+        lines.push(`- Profile: ${report.profile.name}`);
+        lines.push(`- Hardware: ${report.profile.hardware?.memoryGiB ?? "?"} GiB RAM / ${report.profile.hardware?.logicalCpus ?? "?"} logical CPUs`);
+        lines.push(`- Context budget: ${report.profile.maxContextTokens ?? "default"}`);
+        lines.push("");
+    }
+
+    if (report.security) {
+        lines.push("## Security / Permissions", "");
+        lines.push(`- Secret references: ${report.security.secrets?.length ?? 0}`);
+        lines.push(`- Required approval categories: ${(report.security.approvals?.required ?? []).join(", ") || "none"}`);
+        lines.push(`- Explicit grants: ${(report.security.approvals?.granted ?? []).join(", ") || "none"}`);
+        lines.push(`- Approval decisions recorded: ${report.security.approvals?.decisions?.length ?? 0}`);
+        for (const secret of report.security.secrets ?? []) lines.push(`- Secret ${secret.alias}: env ${secret.env} (${secret.available ? "available" : "missing"})`);
+        lines.push("");
+    }
 
     if (report.sandbox?.enabled) {
         lines.push("## Sandbox", "");
@@ -166,7 +183,7 @@ function renderMarkdown(report) {
             const value = report.coverage[metric];
             if (value && value.total > 0) lines.push(`- ${metric}: ${value.covered}/${value.total} (${value.pct}%)`);
         }
-    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.8.");
+    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.9.");
 
     lines.push("", "## Git", "");
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);

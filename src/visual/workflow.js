@@ -58,24 +58,30 @@ export function actionTouchesProtectedVisual(action, baselinePaths = []) {
     return ["write_file", "replace_text"].includes(action?.type) && action.path && baselinePaths.includes(String(action.path));
 }
 
-async function captureCheckpoint(checkpoint, workspace, { executionProvider, taskId }) {
+async function captureCheckpoint(checkpoint, workspace, { executionProvider, taskId, approvalManager = null, secretStore = null }) {
     const capture = checkpoint.capture ?? {};
     const sourceRelative = String(capture.path ?? checkpoint.path ?? "");
     if (!sourceRelative) throw new Error(`Visual checkpoint ${checkpoint.name ?? "unnamed"} requires capture.path.`);
 
     let commandResult = null;
     if (capture.command) {
+        approvalManager?.require("command_exec", { phase: "visual_capture", command: String(capture.command) });
         const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
-        commandResult = await runner({
+        let args = Array.isArray(capture.args) ? capture.args.map((value) => String(secretStore ? secretStore.resolveValue(value) : value)) : [];
+        const env = secretStore ? secretStore.resolveEnv(capture.env ?? {}) : Object.fromEntries(Object.entries(capture.env ?? {}).map(([key, value]) => [key, String(value)]));
+        if (secretStore && (secretStore.containsReference(capture.args) || secretStore.containsReference(capture.env))) approvalManager?.require("secret_use", { phase: "visual_capture" });
+        const commandResultRaw = await runner({
             command: String(capture.command),
-            args: Array.isArray(capture.args) ? capture.args.map(String) : [],
+            args,
+            env,
             cwd: resolveInside(workspace, capture.cwd ?? "."),
             timeoutMs: Number(capture.timeoutMs ?? 120000),
             allowedCommands: VISUAL_CAPTURE_COMMANDS
         });
+        commandResult = secretStore ? secretStore.redactObject(commandResultRaw) : commandResultRaw;
         const expected = Number(capture.expectExitCode ?? 0);
-        if (commandResult.exitCode !== expected || commandResult.timedOut) {
-            return { passed: false, sourceRelative, commandResult, error: `Capture command exited ${commandResult.exitCode}; expected ${expected}.` };
+        if (commandResultRaw.exitCode !== expected || commandResultRaw.timedOut) {
+            return { passed: false, sourceRelative, commandResult, error: `Capture command exited ${commandResultRaw.exitCode}; expected ${expected}.` };
         }
     }
 
@@ -155,7 +161,9 @@ export async function verifyVisualPlan(visual, workspace, {
     executionProvider = null,
     visionProvider = null,
     taskId = "task",
-    baselineSnapshot = null
+    baselineSnapshot = null,
+    approvalManager = null,
+    secretStore = null
 } = {}) {
     if (!visual) return { enabled: false, passed: true, checks: [], evidencePaths: [] };
     if (!apply) {
@@ -175,9 +183,9 @@ export async function verifyVisualPlan(visual, workspace, {
     for (const checkpoint of visual.checkpoints ?? []) {
         let captured;
         try {
-            captured = await captureCheckpoint(checkpoint, workspace, { executionProvider, taskId });
+            captured = await captureCheckpoint(checkpoint, workspace, { executionProvider, taskId, approvalManager, secretStore });
         } catch (error) {
-            captured = { passed: false, error: error.message };
+            captured = { passed: false, error: error.message, code: error.code ?? null };
         }
         checks.push({
             type: "visual_capture",
@@ -189,7 +197,8 @@ export async function verifyVisualPlan(visual, workspace, {
             width: captured.image?.width,
             height: captured.image?.height,
             commandResult: captured.commandResult,
-            error: captured.error
+            error: captured.error,
+            code: captured.code ?? null
         });
         if (!captured.passed) continue;
         evidencePaths.push(captured.evidenceRelative);

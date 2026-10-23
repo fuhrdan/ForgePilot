@@ -28,6 +28,9 @@ function failedChecks(verification) {
     return verification.checks.filter((check) => check.status === "failed");
 }
 
+const NON_REPAIRABLE_CODES = new Set(["APPROVAL_REQUIRED", "SECRET_UNAVAILABLE", "SECRET_NOT_DEFINED", "INVALID_SECRET_CONFIG"]);
+function nonRepairableFailure(item) { return Boolean(item?.code && NON_REPAIRABLE_CODES.has(item.code)); }
+
 async function contextFor(workspace, task) {
     const repository = await buildRepositoryContext(workspace, {
         goal: task.goal ?? "",
@@ -41,7 +44,7 @@ async function contextFor(workspace, task) {
     };
 }
 
-async function executeRepairActions(repairPlan, workspace, apply, protectedPaths = [], executionProvider = null, computerSession = null) {
+async function executeRepairActions(repairPlan, workspace, apply, protectedPaths = [], executionProvider = null, computerSession = null, approvalManager = null, secretStore = null) {
     const results = [];
     for (let index = 0; index < repairPlan.actions.length; index++) {
         const action = repairPlan.actions[index];
@@ -55,25 +58,27 @@ async function executeRepairActions(repairPlan, workspace, apply, protectedPaths
             });
             break;
         }
-        const result = await executeAction(action, workspace, { apply, index, executionProvider, computerSession });
+        const result = await executeAction(action, workspace, { apply, index, executionProvider, computerSession, approvalManager, secretStore });
         results.push(result);
         if (result.status === "failed") break;
     }
     return results;
 }
 
-function verificationOptions(task, gitBaseline, executionProvider = null) {
+function verificationOptions(task, gitBaseline, executionProvider = null, approvalManager = null, secretStore = null) {
     return {
         apply: true,
         gitBaseline,
         expectedChangePaths: Array.isArray(task.expectedChangePaths) ? task.expectedChangePaths : [],
         enforceGitScope: task.enforceGitScope === true,
-        executionProvider
+        executionProvider,
+        approvalManager,
+        secretStore
     };
 }
 
-async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider = null, visionProvider = null, taskId = "task", agentTeam = null) {
-    const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline, executionProvider));
+async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider = null, visionProvider = null, taskId = "task", agentTeam = null, approvalManager = null, secretStore = null) {
+    const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline, executionProvider, approvalManager, secretStore));
     if (testSnapshot) {
         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
         verification.checks.push({
@@ -87,7 +92,7 @@ async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapsh
     }
 
     const visualEvidence = await verifyVisualPlan(visual, workspace, {
-        apply: true, executionProvider, visionProvider, taskId, baselineSnapshot: visualBaselineSnapshot
+        apply: true, executionProvider, visionProvider, taskId, baselineSnapshot: visualBaselineSnapshot, approvalManager, secretStore
     });
     for (const check of visualEvidence.checks) {
         verification.checks.push({ ...check, index: verification.checks.length, phase: "visual" });
@@ -152,7 +157,9 @@ export async function runTaskWithRepairs({
     executionProvider = null,
     visionProvider = null,
     agentTeam = null,
-    computerSession = null
+    computerSession = null,
+    approvalManager = null,
+    secretStore = null
 }) {
     const initialContext = await contextFor(workspace, task);
     if (agentTeam?.enabled && resumeState?.multiAgent) agentTeam.restore(resumeState.multiAgent);
@@ -176,15 +183,17 @@ export async function runTaskWithRepairs({
     const visualBaselineSnapshot = resumeState?.visualBaselineSnapshot ?? await captureVisualBaselineSnapshot(visual, workspace);
 
     if (!apply) {
-        const testAuthoring = testFirst ? await executeTestAuthoring(testFirst, workspace, { apply: false, executionProvider }) : [];
-        const actions = await executePlan(plan, workspace, { apply: false, executionProvider, computerSession });
+        const testAuthoring = testFirst ? await executeTestAuthoring(testFirst, workspace, { apply: false, executionProvider, approvalManager, secretStore }) : [];
+        const actions = await executePlan(plan, workspace, { apply: false, executionProvider, computerSession, approvalManager, secretStore });
         const verification = await verifyPlan(plan, workspace, {
             apply: false,
             gitBaseline,
             expectedChangePaths: task.expectedChangePaths ?? [],
-            executionProvider
+            executionProvider,
+            approvalManager,
+            secretStore
         });
-        const visualEvidence = await verifyVisualPlan(visual, workspace, { apply: false, taskId, baselineSnapshot: visualBaselineSnapshot });
+        const visualEvidence = await verifyVisualPlan(visual, workspace, { apply: false, taskId, baselineSnapshot: visualBaselineSnapshot, approvalManager, secretStore });
         for (const check of visualEvidence.checks) verification.checks.push({ ...check, index: verification.checks.length, phase: "visual" });
         verification.visual = visualEvidence;
         return {
@@ -198,7 +207,7 @@ export async function runTaskWithRepairs({
     }
 
     let state = resumeState ?? {
-        version: 6,
+        version: 9,
         taskId,
         planner: plannerName,
         plan,
@@ -230,7 +239,7 @@ export async function runTaskWithRepairs({
     let protectedPaths = [...new Set([...protectedTestFiles, ...protectedVisualBaselines])];
 
     if (testFirst && !testFirstEvidence?.red?.validRed) {
-        const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true, executionProvider });
+        const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true, executionProvider, approvalManager, secretStore });
         if (authoring.some((item) => item.status === "failed")) {
             const verification = await earlyFailure({
                 workspace, gitBaseline, task,
@@ -254,7 +263,7 @@ export async function runTaskWithRepairs({
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
-        const red = await runRedGate(workspace, testFirst.red, executionProvider);
+        const red = await runRedGate(workspace, testFirst.red, executionProvider, approvalManager);
         testFirstEvidence = { enabled: true, authoring, testOnlyDiff, red, selectedTests: testFirst.selectedTests };
         if (!red.validRed) {
             const verification = await earlyFailure({
@@ -282,7 +291,7 @@ export async function runTaskWithRepairs({
         if (actionTouchesProtectedTest(action, protectedPaths)) {
             result = { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a protected RED-proven test or visual baseline." };
         } else {
-            result = await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider, computerSession });
+            result = await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider, computerSession, approvalManager, secretStore });
         }
         actions.push({ ...result, phase: "main", attempt: 0 });
 
@@ -296,6 +305,11 @@ export async function runTaskWithRepairs({
 
         if (result.status === "failed") {
             let evidence = { kind: "action", actionIndex, action, result };
+            if (nonRepairableFailure(result)) {
+                const verification = await earlyFailure({ workspace, gitBaseline, task, reason: result.error, checks: [{ index: 0, type: "policy_gate", phase: "execution", status: "failed", code: result.code, error: result.error }] });
+                state = await saveState(workspace, { ...state, actionIndex, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, status: "failed", lastFailure: evidence });
+                return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: await collectCoverage(workspace) };
+            }
             let repaired = false;
 
             while (repairCount < maxRepairs) {
@@ -303,7 +317,7 @@ export async function runTaskWithRepairs({
                 const repairPlan = agentTeam?.enabled
                     ? await agentTeam.debug(task, await contextFor(workspace, task), evidence, repairCount, plan)
                     : await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
-                const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider, computerSession);
+                const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider, computerSession, approvalManager, secretStore);
                 const repairActionsPassed = repairResults.every((item) => item.status === "passed");
                 const repairRecord = {
                     attempt: repairCount,
@@ -317,7 +331,7 @@ export async function runTaskWithRepairs({
                 if (repairActionsPassed && repairPlan.actions.length > 0) {
                     result = actionTouchesProtectedTest(action, protectedPaths)
                         ? { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a protected RED-proven test or visual baseline." }
-                        : await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider, computerSession });
+                        : await executeAction(action, workspace, { apply: true, index: actionIndex, executionProvider, computerSession, approvalManager, secretStore });
                     if (result.status === "passed" && testSnapshot) {
                         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
                         if (!integrity.passed) result = { index: actionIndex, type: "test_integrity", status: "failed", changedTestFiles: integrity.changed };
@@ -388,7 +402,7 @@ export async function runTaskWithRepairs({
             }
 
             const revision = await agentTeam.revise(task, await contextFor(workspace, task), agentReview, reviewRound, plan);
-            const revisionResults = await executeRepairActions(revision, workspace, true, protectedPaths, executionProvider, computerSession);
+            const revisionResults = await executeRepairActions(revision, workspace, true, protectedPaths, executionProvider, computerSession, approvalManager, secretStore);
             for (const [revisionIndex, result] of revisionResults.entries()) {
                 actions.push({ ...result, index: actions.length, phase: "review-revision", attempt: reviewRound, revisionIndex });
             }
@@ -405,18 +419,19 @@ export async function runTaskWithRepairs({
         }
     }
 
-    let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam);
+    let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam, approvalManager, secretStore);
     while (
         !verification.passed &&
         repairCount < maxRepairs &&
-        !failedChecks(verification).some((check) => check.type === "agent_verifier" && check.policyPassed === false)
+        !failedChecks(verification).some((check) => check.type === "agent_verifier" && check.policyPassed === false) &&
+        !failedChecks(verification).some(nonRepairableFailure)
     ) {
         repairCount++;
         const evidence = { kind: "verification", failedChecks: failedChecks(verification) };
         const repairPlan = agentTeam?.enabled
                     ? await agentTeam.debug(task, await contextFor(workspace, task), evidence, repairCount, plan)
                     : await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
-        const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider, computerSession);
+        const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider, computerSession, approvalManager, secretStore);
         const repairRecord = {
             attempt: repairCount,
             trigger: evidence,
@@ -428,7 +443,7 @@ export async function runTaskWithRepairs({
         repairs.push(repairRecord);
 
         if (repairResults.every((item) => item.status === "passed") && repairPlan.actions.length > 0) {
-            verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam);
+            verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam, approvalManager, secretStore);
             repairRecord.retry = { passed: verification.passed, failedChecks: failedChecks(verification) };
         }
 

@@ -32,10 +32,16 @@ export async function getGitStatus(workspace) {
         runCommand({ command: "git", args: ["status", "--porcelain"], cwd: workspace, timeoutMs: 10000 })
     ]);
 
+    const porcelain = status.stdout.split(/\r?\n/).filter((line) => {
+        if (!line.trim()) return false;
+        const file = line.length > 3 ? line.slice(3).replace(/^"|"$/g, "") : line;
+        return !file.startsWith(".forgepilot/") && file !== ".forgepilot";
+    }).join("\n").trim();
+
     return {
         isRepository: true,
         branch: branch.stdout.trim() || null,
-        porcelain: status.stdout.trim()
+        porcelain
     };
 }
 

@@ -1,0 +1,33 @@
+{
+  "goal": "Create and independently verify a tiny hardened ForgePilot demo program.",
+  "planner": "scripted",
+  "permissions": {
+    "require": ["file_write", "command_exec"]
+  },
+  "actions": [
+    {
+      "type": "write_file",
+      "path": "app.js",
+      "content": "console.log('FORGEPILOT 0.9 HARDENED');\n"
+    },
+    {
+      "type": "run_command",
+      "command": "node",
+      "args": ["app.js"],
+      "expectExitCode": 0
+    }
+  ],
+  "verify": [
+    {
+      "type": "file_contains",
+      "path": "app.js",
+      "text": "FORGEPILOT 0.9 HARDENED"
+    },
+    {
+      "type": "command",
+      "command": "node",
+      "args": ["app.js"],
+      "stdoutIncludes": "FORGEPILOT 0.9 HARDENED"
+    }
+  ]
+}

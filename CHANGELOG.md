@@ -1,30 +1,35 @@
 # Changelog
 
-## 0.8.0 — Computer / IDE Control
+## 0.9.0 — Product Hardening
 
 ### Added
-- Persistent `ComputerSession` with ordered interaction trace and screenshot evidence.
-- Real Chrome DevTools Protocol driver for Chromium/Chrome and CDP-enabled Electron targets.
-- Deterministic replay driver for CI and regression tests.
-- `computer_navigate`, `computer_inspect`, `computer_assert`, `computer_click`, `computer_type`, `computer_key`, `computer_wait`, and `computer_screenshot` actions.
-- Accessibility-tree inspection and accessibility state assertions.
-- CSS-selector click/type support plus coordinate clicking and keyboard dispatch.
-- Screenshot capture to `.forgepilot/computer/<task-id>/` and computer evidence in reports.
-- CLI controls: `--computer`, `--computer-driver`, `--computer-endpoint`, `--computer-target`.
-- `docs/COMPUTER_CONTROL.md` and deterministic replay demo.
+- Environment-backed `SecretStore` with `${{ secret.alias }}` templates and `{ "secretRef": "alias" }` values.
+- Redaction of resolved secret values from command results and persisted run data.
+- Opt-in approval categories: `file_write`, `command_exec`, `computer_control`, `external_network`, `secret_use`, and `sandbox_network`.
+- `--approve`, `--approve-all`, and task-level `permissions.require` / `permissions.grants`.
+- Recovery journals under `.forgepilot/recovery/` plus `forgepilot recover` stale/interrupted-run inspection.
+- Local Ed25519 provenance keypair, report SHA-256/signature records, and `forgepilot verify-run`.
+- Hardware-aware `low-resource`, `balanced`, and `high-quality` profiles plus `forgepilot profile`.
+- Local loopback dashboard with signed-run status via `forgepilot dashboard`.
+- Native Windows UI Automation driver (`windows-ui`) using a fixed PowerShell/.NET UIAutomation bridge.
+- Windows user-level installer script and launcher.
+- Hardened approval demo and product-hardening documentation.
 
 ### Changed
-- Computer-action failures participate in the bounded v0.2 repair/retry loop.
-- Ollama Implementer/Debugger action schema includes computer-control actions.
-- Sandbox evidence export supports computer traces/screenshots in addition to visual evidence.
-- `doctor` now probes common Chromium and VS Code executables.
+- Command/test/verification/visual execution can share the same approval and secret policy.
+- Internal `.forgepilot` state is filtered from Git working-tree status reporting.
+- `doctor` reports RAM/CPU profile recommendation and probes PowerShell.
+- Computer driver CLI recognizes `windows-ui` in addition to CDP/replay.
+- Reports include selected product profile and non-secret permission/secret-reference metadata.
 
 ### Safety
-- Navigation is localhost-only by default and external origins require explicit allowlisting.
-- Existing target URLs are validated before inspection/interaction, preventing an already-open external tab from bypassing navigation policy.
-- `data:` navigation is opt-in and file navigation is workspace-confined.
-- Typed values are redacted from traces by default.
-- Computer screenshot paths are evidence-directory confined.
-- Planner/Reviewer/Verifier cannot smuggle computer-control actions through read-only verdicts.
-- Real computer control is blocked when `--sandbox` is active in v0.8 because a host IDE could bypass PASS-only promotion.
-- CDP navigation fails when the browser reports `errorText`; it cannot be recorded as a false PASS.
+- Secret configuration accepts environment references, not inline secret values.
+- Known resolved secrets are redacted before reports are written.
+- Approval gates are additive; they never bypass command allowlists, workspace confinement, sandbox limits, origin policy, or agent role separation.
+- Native Windows UI payloads are supplied through an environment variable rather than interpolated into PowerShell source.
+- Native coordinate clicking is disabled in v0.9 in favor of auditable AutomationId/name targeting.
+- Provenance detects report tampering and can optionally verify against a trusted public key.
+
+## 0.8.0 — Computer / IDE Control
+
+- Persistent CDP/replay sessions, accessibility inspection/assertions, guarded UI actions, screenshot evidence, origin validation, and replayable interaction traces.

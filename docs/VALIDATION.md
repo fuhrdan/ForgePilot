@@ -1,44 +1,33 @@
-# ForgePilot v0.8 Validation
+# ForgePilot v0.9 Validation
+
+Release acceptance requires all earlier v0.1-v0.8 regression tests plus v0.9 product-hardening checks.
 
 ## Automated suite
 
-Release acceptance requires **63/63 tests**. v0.8 adds 12 computer-control tests on top of the 51 v0.7 tests, covering:
+The v0.9 suite covers:
 
-- read-only agent rejection of computer actions;
-- localhost/external-origin policy;
-- current-target origin enforcement;
-- secret typing redaction;
-- screenshot path confinement;
-- action routing through a persistent session;
-- GUI failure → bounded repair → retry;
-- selector-to-coordinate mouse dispatch;
-- bounded accessibility capture;
-- accessibility assertions as pass/fail gates;
-- CDP navigation `errorText` fail-closed behavior;
-- sandbox export of computer trace/screenshot evidence.
+- all guarded execution / repair / repository / test-first / sandbox / visual / multi-agent / computer-control behavior from prior releases;
+- environment-backed secret resolution and persisted-output redaction;
+- approval-gate deny/grant behavior and non-consumption of repair budget for policy failures;
+- Ed25519 provenance signing, trusted-key verification, and tamper detection;
+- recovery journal lifecycle and stale-process detection;
+- hardware/profile selection;
+- loopback dashboard signed-run history;
+- native Windows UI driver platform refusal and fixed-bridge payload transport.
 
-## Real Chromium acceptance
+## CLI acceptance
 
-A release candidate must also connect to a real Chromium remote-debugging endpoint and successfully perform at minimum:
+A release candidate must also pass:
 
-1. persistent CDP connection;
-2. accessibility inspection;
-3. accessibility assertion;
-4. screenshot capture;
-5. trace generation;
-6. normal task report generation.
+1. `npm test`.
+2. syntax check every JavaScript file with `node --check`.
+3. `node src/cli.js --version` returns `0.9.0`.
+4. `examples/hardened-task.json` fails without required approvals and uses zero repair attempts.
+5. the same task passes with `--approve file_write,command_exec`.
+6. `verify-run` validates both signature/hash and the workspace trusted public key.
+7. a secret-bearing task leaves no resolved secret value anywhere under `.forgepilot`.
+8. final ZIP extraction reruns items 1-6 from the archive itself.
 
-Mouse/keyboard/selector dispatch are additionally covered by deterministic CDP-client tests. If the build environment applies enterprise browsing policy, network navigation may be blocked by Chromium; ForgePilot must surface the browser `errorText` as a failure rather than report navigation PASS.
+## Platform limitation
 
-## Archive acceptance
-
-1. syntax-check every `.js` file;
-2. run all 63 tests in the working tree;
-3. run the deterministic replay CLI demo;
-4. run the real Chromium CDP acceptance when Chromium is available;
-5. verify CLI version `0.8.0`;
-6. verify report includes the Computer / IDE Control section;
-7. create ZIP + SHA-256;
-8. extract the exact ZIP into a clean directory;
-9. rerun all 63 tests and replay demo from the extracted archive;
-10. verify no transient `.forgepilot/`, `work/`, `node_modules/`, or smoke-test state is included.
+The release build host is Linux. The Windows UI driver is contract-tested with an injected bridge runner and fails closed off Windows, but real `.NET UIAutomationClient` execution and the PowerShell installer require a Windows acceptance pass on a Windows 10/11 machine. CDP/replay control remains independently covered by the v0.8 tests.

@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.8.0",
-  "description": "Local-first verified software engineering agent with persistent computer/IDE control with replayable interaction evidence, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, visual regression evidence, disposable sandboxes, test-first gates, bounded repair, and independent verification.",
+  "version": "0.9.0",
+  "description": "Local-first verified software engineering agent with product hardening, signed provenance, environment-backed secrets, approval gates, recovery journals, hardware/model profiles, local dashboard, native Windows UI Automation, persistent computer control, multi-agent separation, visual verification, disposable sandboxes, test-first gates, bounded repair, and independent verification.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

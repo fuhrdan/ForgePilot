@@ -42,7 +42,7 @@ export function normalizeTestFirst(plan, repository, task = {}) {
     };
 }
 
-export async function executeTestAuthoring(testFirst, workspace, { apply = true, executionProvider = null } = {}) {
+export async function executeTestAuthoring(testFirst, workspace, { apply = true, executionProvider = null, approvalManager = null, secretStore = null } = {}) {
     const results = [];
     for (let index = 0; index < testFirst.testActions.length; index++) {
         const action = testFirst.testActions[index];
@@ -54,7 +54,7 @@ export async function executeTestAuthoring(testFirst, workspace, { apply = true,
             results.push({ index, type: action.type, status: "failed", error: "Test-first authoring phase accepts only write_file or replace_text actions." });
             break;
         }
-        const result = await executeAction(action, workspace, { apply, index, executionProvider });
+        const result = await executeAction(action, workspace, { apply, index, executionProvider, approvalManager, secretStore });
         results.push(result);
         if (result.status === "failed") break;
     }
@@ -83,16 +83,17 @@ export async function verifyTestOnlyDiff(workspace, gitBaseline, testFirst) {
     };
 }
 
-export async function runRedGate(workspace, gate, executionProvider = null) {
+export async function runRedGate(workspace, gate, executionProvider = null, approvalManager = null) {
     if (!gate?.command) {
         return { phase: "red", status: "failed", validRed: false, reason: "No executable test command could be discovered or supplied." };
     }
     let result;
     try {
+        approvalManager?.require("command_exec", { phase: "red", command: gate.command });
         const runner = executionProvider?.run ? executionProvider.run.bind(executionProvider) : runCommand;
         result = await runner({ command: gate.command, args: gate.args, cwd: resolveInside(workspace, gate.cwd ?? "."), timeoutMs: gate.timeoutMs });
     } catch (error) {
-        return { phase: "red", status: "failed", validRed: false, reason: `Test infrastructure failed; ${error.message}`, command: gate.command, args: gate.args, exitCode: -1, stdout: "", stderr: error.message, timedOut: false };
+        return { phase: "red", status: "failed", validRed: false, reason: `Test infrastructure failed; ${error.message}`, code: error.code ?? null, command: gate.command, args: gate.args, exitCode: -1, stdout: "", stderr: error.message, timedOut: false };
     }
     const infrastructureFailure = result.exitCode === -1 || result.timedOut;
     const combined = `${result.stdout}

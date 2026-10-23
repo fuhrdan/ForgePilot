@@ -1,41 +1,56 @@
-# ForgePilot v0.8 Architecture
+# ForgePilot Architecture — v0.9
 
 ```text
 Task / Goal
     |
+    +--> Product profile (optional defaults)
+    +--> Secret aliases -> environment only
+    +--> Approval policy
+    |
+    v
 Repository Intelligence
     |
+    v
 Planner [read-only]
     |
+    v
 Implementer [mutation proposals]
     |
-    +------------------+
-    |                  |
-Guarded Executor   ComputerSession
-    |              /            \
-Host/Sandbox     Replay          CDP
-    |                         browser / Electron / IDE
-    |                              |
-    |                    accessibility + input + PNG
-    +---------------+--------------+
-                    |
+    v
+Guarded Orchestrator
+    +--> filesystem actions (workspace-confined)
+    +--> command provider (host or disposable container)
+    +--> computer provider (CDP / replay / Windows UI)
+    |
+    v
 Reviewer [read-only]
-                    |
-Tests / Build / Git / Visual / UI-state evidence
-                    |
+    |
+    v
+Test / Build / Git / Visual / UI Evidence
+    |
+    v
 Verifier [read-only]
-                    |
-Debugger on bounded failure
-                    |
-PASS / promotion / report
+    |
+    v
+Report + Recovery Journal + Ed25519 Provenance
+    |
+    +--> loopback dashboard (read-only run history)
 ```
 
 ## Trust boundaries
 
-The orchestrator owns budgets, PASS/FAIL, evidence, protected test/baseline hashes, role policy, and session policy. Agents do not execute code or UI operations directly.
+The LLM never receives direct shell authority. Commands remain allowlisted and shell-free. Planner/Reviewer/Verifier remain read-only. Implementer/Debugger return proposals that pass through the executor. Optional approval categories add another execution-time gate and cannot widen existing allowlists or path/origin policies.
 
-The `ComputerSession` owns one persistent GUI connection for the task. It validates actions, validates current target origin when the driver can expose it, sequences actions, redacts sensitive typing, writes screenshots, and persists a replayable trace.
+Secret values are resolved after planning, at execution time, from environment variables. Known resolved values are redacted before command results enter checkpoints/reports. The planner and persisted task plan retain aliases/placeholders rather than resolved values.
 
-The CDP driver contains only browser/Electron protocol operations; it does not expose arbitrary JavaScript evaluation as an agent action. CSS-selector lookup is generated internally for bounded click/type operations.
+## Provenance
 
-Real computer control is kept out of v0.8 sandbox mode because an IDE connected to the host repository is outside the disposable filesystem boundary. This is a deliberate fail-closed boundary, not an implicit host escape.
+`report.json` is immutable input to the provenance step. ForgePilot hashes and signs its exact bytes with a local Ed25519 private key and writes a detached `provenance.json`. The signature is not embedded back into `report.json`, avoiding circular serialization.
+
+## Recovery
+
+Engineering checkpoints (`.forgepilot/state`) and operational recovery journals (`.forgepilot/recovery`) are separate. This keeps task-resume state distinct from process-lifecycle evidence.
+
+## Native Windows control
+
+The Windows driver is a trusted adapter, not an agent-generated PowerShell channel. ForgePilot owns a fixed bridge program; JSON action payloads travel through an environment variable. The bridge uses .NET UI Automation and refuses native coordinate clicks in v0.9.

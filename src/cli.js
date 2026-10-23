@@ -16,21 +16,34 @@ import { decodePng } from "./visual/png.js";
 import { compareImages } from "./visual/diff.js";
 import { AgentTeam } from "./agents/team.js";
 import { createComputerSession } from "./computer/factory.js";
+import { SecretStore } from "./security/secrets.js";
+import { ApprovalManager } from "./security/approvals.js";
+import { resolveProfile, detectHardware, recommendProfile } from "./product/profiles.js";
+import { RecoveryJournal, listRecoveryJournals } from "./product/recovery.js";
+import { signReport, verifyReportProvenance } from "./security/provenance.js";
+import { createDashboardServer } from "./dashboard/server.js";
 
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
 `Usage:\n` +
 `  forgepilot init <workspace>\n` +
 `  forgepilot doctor\n` +
+`  forgepilot profile [auto|low-resource|balanced|high-quality]\n` +
+`  forgepilot recover [workspace]\n` +
+`  forgepilot dashboard [workspace] [--port N]\n` +
+`  forgepilot verify-run <report.json> [--public-key PATH]\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--computer] [--computer-driver cdp|replay] [--computer-endpoint URL] [--computer-target TEXT] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--computer] [--computer-driver cdp|replay|windows-ui] [--computer-endpoint URL] [--computer-target TEXT] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--profile NAME] [--approve CATEGORIES] [--approve-all] [--apply]\n` +
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Computer / IDE control (v0.8):\n` +
+`Product hardening (v0.9):\n` +
+`  Optional permission categories, environment-backed secrets, recovery journals, signed provenance, hardware/model profiles, local dashboard, and native Windows UI Automation.\n` +
+`  --approve accepts comma-separated required categories; --approve-all grants all task-required categories.\n\n` +
+`Computer / IDE control (v0.8+):\n` +
 `  task.computer enables persistent CDP/replay GUI sessions with accessibility inspection, clicks, typing, keys, screenshots, and replayable traces.\n` +
 `  Navigation is localhost-only by default unless task.computer.allowedOrigins explicitly expands it.\n\n` +
 `Multi-agent engineering (v0.7+):\n` +
@@ -54,7 +67,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents"]);
+    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -71,7 +84,7 @@ function parseOptions(args) {
 }
 
 async function doctor() {
-    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "chromium", "google-chrome", "msedge", "code", "codium", "docker", "podman"];
+    const tools = ["node", "git", "ollama", "npm", "python", "dotnet", "go", "java", "cargo", "godot", "godot4", "chromium", "google-chrome", "msedge", "code", "codium", "powershell", "pwsh", "docker", "podman"];
     console.log(`ForgePilot v${VERSION} doctor\n`);
     for (const tool of tools) {
         const found = await commandExists(tool);
@@ -81,6 +94,9 @@ async function doctor() {
     console.log(`Platform: ${process.platform} ${process.arch}`);
     const sandboxRuntime = await detectContainerRuntime("auto");
     console.log(`Sandbox runtime: ${sandboxRuntime.available ? sandboxRuntime.runtime : "unavailable"}`);
+    const hardware = detectHardware();
+    console.log(`Hardware: ${hardware.memoryGiB} GiB RAM, ${hardware.logicalCpus} logical CPUs`);
+    console.log(`Recommended profile: ${recommendProfile(hardware)}`);
 }
 
 async function cloneRepository(url, workspace) {
@@ -138,24 +154,34 @@ function repositoryReportSummary(repository) {
 
 async function runTask(taskFile, options) {
     const taskPath = path.resolve(taskFile);
-    const task = JSON.parse(await fs.readFile(taskPath, "utf8"));
+    const rawTask = JSON.parse(await fs.readFile(taskPath, "utf8"));
+    const selectedProfileName = options.profile ?? rawTask.profile ?? null;
+    const profile = selectedProfileName ? resolveProfile(selectedProfileName) : null;
+    const task = profile ? { ...rawTask, maxContextTokens: rawTask.maxContextTokens ?? profile.maxContextTokens } : rawTask;
+    const effectiveOptions = profile ? {
+        ...options,
+        model: options.model ?? task.model ?? profile.model,
+        "vision-model": options["vision-model"] ?? task.visual?.provider?.model ?? profile.visionModel
+    } : options;
     const originalWorkspace = await ensureWorkspace(options.workspace ?? task.workspace ?? path.dirname(taskPath));
     await initializeWorkspace(originalWorkspace);
+    const secretStore = new SecretStore(task.secrets ?? {});
+    const approvalManager = new ApprovalManager(task.permissions ?? {}, { grants: options.approve ?? [], approveAll: Boolean(options["approve-all"]) });
 
     const plannerName = options.planner ?? task.planner ?? "scripted";
-    const planner = buildPlanner(plannerName, task, options);
+    const planner = buildPlanner(plannerName, task, effectiveOptions);
     const rawAgentTeam = task.agentTeam === true ? {} : (task.agentTeam && typeof task.agentTeam === "object" ? task.agentTeam : {});
     const agentsEnabled = options["no-agents"]
         ? false
         : Boolean(options.agents || rawAgentTeam.enabled === true || (plannerName === "ollama" && rawAgentTeam.enabled !== false));
-    const maxReviewRounds = Math.max(0, Number(options["max-review-rounds"] ?? rawAgentTeam.maxReviewRounds ?? 2));
+    const maxReviewRounds = Math.max(0, Number(options["max-review-rounds"] ?? rawAgentTeam.maxReviewRounds ?? profile?.maxReviewRounds ?? 2));
     if (!Number.isFinite(maxReviewRounds)) throw new Error("--max-review-rounds must be a number.");
     const roleAdapters = {};
     if (agentsEnabled && plannerName === "ollama") {
         const roleModels = rawAgentTeam.models ?? {};
-        const baseUrl = options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434";
-        const fallbackModel = options.model ?? task.model ?? "qwen2.5-coder:7b";
-        const modelFor = (role, optionName) => options[optionName] ?? roleModels[role] ?? fallbackModel;
+        const baseUrl = effectiveOptions["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434";
+        const fallbackModel = effectiveOptions.model ?? task.model ?? "qwen2.5-coder:7b";
+        const modelFor = (role, optionName) => effectiveOptions[optionName] ?? roleModels[role] ?? fallbackModel;
         roleAdapters.planner = new OllamaPlanner({ model: modelFor("planner", "model"), baseUrl });
         roleAdapters.implementer = new OllamaPlanner({ model: modelFor("implementer", "implementer-model"), baseUrl });
         roleAdapters.debugger = new OllamaPlanner({ model: modelFor("debugger", "debugger-model"), baseUrl });
@@ -169,14 +195,19 @@ async function runTask(taskFile, options) {
         maxReviewRounds,
         requireVerifierApproval: rawAgentTeam.requireVerifierApproval !== false
     });
-    const visionProvider = buildVisionProvider(task, options);
+    const visionProvider = buildVisionProvider(task, effectiveOptions);
     const taskId = createTaskId(taskPath, task);
-    const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? 2));
+    const recovery = new RecoveryJournal(originalWorkspace, taskId);
+    const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? profile?.maxRepairs ?? 2));
     if (!Number.isFinite(maxRepairs)) throw new Error("--max-repairs must be a number.");
 
     const rawSandbox = task.sandbox === true ? {} : (task.sandbox && typeof task.sandbox === "object" ? task.sandbox : {});
     const sandboxEnabled = Boolean(options.sandbox || task.sandbox === true || rawSandbox.enabled === true);
     if (sandboxEnabled && options.resume) throw new Error("Sandbox resume is not supported in v0.7; rerun the task in a fresh disposable sandbox or use host mode with --resume.");
+
+    if (sandboxEnabled && options.apply && String(rawSandbox.network ?? "none") !== "none") {
+        approvalManager.require("sandbox_network", { network: rawSandbox.network });
+    }
 
     let sandboxSession = null;
     let workingWorkspace = originalWorkspace;
@@ -228,15 +259,20 @@ async function runTask(taskFile, options) {
     console.log(`Goal: ${task.goal ?? "(no goal supplied)"}`);
     console.log(`Workspace: ${originalWorkspace}`);
     console.log(`Planner: ${plannerName}`);
+    if (profile) console.log(`Profile: ${profile.name} (${profile.hardware.memoryGiB} GiB RAM / ${profile.hardware.logicalCpus} CPUs)`);
+    if (secretStore.summary().length) console.log(`Secrets: ${secretStore.summary().length} environment-backed reference(s)`);
+    if (approvalManager.snapshot().required.length) console.log(`Required approvals: ${approvalManager.snapshot().required.join(", ")}`);
     console.log(`Agent team: ${agentsEnabled ? `ON (review rounds ${maxReviewRounds}, verifier gate ${agentTeam.requireVerifierApproval ? "required" : "advisory"})` : "OFF"}`);
     console.log(`Repair budget: ${maxRepairs}`);
     console.log(`Computer control: ${computerSession ? `${computerConfig.driver}${computerConfig.endpoint ? ` @ ${computerConfig.endpoint}` : ""}` : "OFF"}`);
     if (sandboxEnabled) console.log(`Sandbox: ${options.apply ? `${sandboxInfo.provider.runtime ?? "planned"} / ${sandboxInfo.provider.image ?? rawSandbox.image ?? "node:22-bookworm"}` : "planned"}`);
     console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}${options.resume ? " / RESUME" : ""}\n`);
 
+    await recovery.begin({ taskPath, workspace: originalWorkspace, goal: task.goal ?? "", profile: profile?.name ?? null });
     let outcome;
     let status = "FAIL";
     try {
+        await recovery.checkpoint("execution", { apply: Boolean(options.apply) });
         outcome = await runTaskWithRepairs({
             task,
             planner,
@@ -249,7 +285,9 @@ async function runTask(taskFile, options) {
             executionProvider,
             visionProvider,
             agentTeam,
-            computerSession
+            computerSession,
+            approvalManager,
+            secretStore
         });
 
         console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
@@ -296,16 +334,26 @@ async function runTask(taskFile, options) {
             visionProvider: visionProvider?.describe?.() ?? null,
             multiAgent: outcome.multiAgent ?? agentTeam.snapshot(),
             computer: computerInfo,
+            profile: profile ? { name: profile.name, requested: profile.requested, hardware: profile.hardware, maxContextTokens: profile.maxContextTokens, maxRepairs: profile.maxRepairs, maxReviewRounds: profile.maxReviewRounds } : null,
+            security: { secrets: secretStore.summary(), approvals: approvalManager.snapshot() },
             sandbox: sandboxInfo
         };
 
-        const artifacts = await writeReport(originalWorkspace, report);
+        await recovery.checkpoint("reporting", { status });
+        const safeReport = secretStore.redactObject(report);
+        const artifacts = await writeReport(originalWorkspace, safeReport);
+        const provenance = await signReport(originalWorkspace, artifacts.jsonPath);
+        await recovery.complete(status, { reportPath: artifacts.jsonPath, provenancePath: provenance.provenancePath, keyId: provenance.keyId });
         console.log(`Result: ${status}`);
         if (sandboxEnabled && options.apply) console.log(`Sandbox promotion: ${sandboxInfo.promoted ? `PASS (${sandboxInfo.promotedChanges.length} file change(s))` : "NOT PROMOTED"}`);
         console.log(`Report: ${artifacts.markdownPath}`);
         console.log(`JSON:   ${artifacts.jsonPath}`);
+        console.log(`Signed: ${provenance.provenancePath} (key ${provenance.keyId})`);
 
         if (status === "FAIL") process.exitCode = 2;
+    } catch (error) {
+        await recovery.fail(error).catch(() => {});
+        throw error;
     } finally {
         if (computerSession) await computerSession.close();
         if (sandboxSession) await sandboxSession.close({ preserve: Boolean(options["sandbox-keep"] || rawSandbox.keep) && status !== "PASS" });
@@ -367,11 +415,55 @@ async function compareImagesCommand(actualArg, baselineArg, options) {
     if (!passed) process.exitCode = 2;
 }
 
+async function profileCommand(name = "auto") {
+    const profile = resolveProfile(name);
+    console.log(`ForgePilot v${VERSION} profile`);
+    console.log(`Selected: ${profile.name}${name === "auto" ? " (auto)" : ""}`);
+    console.log(`Recommended: ${profile.recommended}`);
+    console.log(`Hardware: ${profile.hardware.memoryGiB} GiB RAM, ${profile.hardware.logicalCpus} logical CPUs, ${profile.hardware.platform}/${profile.hardware.arch}`);
+    console.log(`Coding model: ${profile.model}`);
+    console.log(`Vision model: ${profile.visionModel}`);
+    console.log(`Context: ${profile.maxContextTokens}; repairs: ${profile.maxRepairs}; review rounds: ${profile.maxReviewRounds}`);
+}
+
+async function recoverCommand(workspaceArg = ".") {
+    const workspace = await ensureWorkspace(workspaceArg);
+    const journals = await listRecoveryJournals(workspace);
+    console.log(`ForgePilot v${VERSION} recovery journal`);
+    if (!journals.length) return console.log("No recovery journals found.");
+    for (const item of journals) console.log(`${item.taskId}  ${item.status}${item.stale ? " (interrupted)" : ""}  ${item.phase ?? ""}  ${item.updatedAt ?? ""}`);
+    if (journals.some((item) => item.stale || ["failed", "crashed"].includes(item.status))) console.log("Use the original task with `forgepilot run <task.json> --resume --apply` when a checkpoint is available.");
+}
+
+async function verifyRunCommand(reportArg, options) {
+    if (!reportArg) throw new Error("verify-run requires <report.json>.");
+    const result = await verifyReportProvenance(path.resolve(reportArg), { trustedPublicKeyPath: options["public-key"] ?? null });
+    console.log(`ForgePilot v${VERSION} provenance verification`);
+    console.log(`Signature: ${result.signatureValid ? "PASS" : "FAIL"}`);
+    console.log(`SHA-256:   ${result.hashValid ? "PASS" : "FAIL"}`);
+    if (result.trustedKeyMatch !== null) console.log(`Trusted key: ${result.trustedKeyMatch ? "PASS" : "FAIL"}`);
+    console.log(`Key ID: ${result.keyId}`);
+    console.log(`Result: ${result.passed ? "PASS" : "FAIL"}`);
+    if (!result.passed) process.exitCode = 2;
+}
+
+async function dashboardCommand(workspaceArg, options) {
+    const workspace = await ensureWorkspace(workspaceArg ?? ".");
+    const port = Number(options.port ?? 3210);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
+    const dashboard = await createDashboardServer({ workspace, port });
+    console.log(`ForgePilot v${VERSION} dashboard`);
+    console.log(`Workspace: ${workspace}`);
+    console.log(`Open: http://${dashboard.host}:${dashboard.port}/`);
+}
+
 async function main() {
     const [command, ...rest] = process.argv.slice(2);
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
     if (["version", "--version", "-v"].includes(command)) return console.log(VERSION);
     if (command === "doctor") return doctor();
+    if (command === "profile") return profileCommand(rest[0] ?? "auto");
+    if (command === "recover") return recoverCommand(rest[0] ?? ".");
 
     if (command === "init") {
         const workspace = rest[0];
@@ -395,6 +487,16 @@ async function main() {
     if (command === "compare-images") {
         const { options, positionals } = parseOptions(rest);
         return compareImagesCommand(positionals[0], positionals[1], options);
+    }
+
+    if (command === "verify-run") {
+        const { options, positionals } = parseOptions(rest);
+        return verifyRunCommand(positionals[0], options);
+    }
+
+    if (command === "dashboard") {
+        const { options, positionals } = parseOptions(rest);
+        return dashboardCommand(positionals[0] ?? ".", options);
     }
 
     if (command === "run") {
