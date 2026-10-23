@@ -83,7 +83,7 @@ async function captureCheckpoint(checkpoint, workspace, { executionProvider, tas
     if (!(await exists(source))) return { passed: false, sourceRelative, commandResult, error: "Screenshot file was not produced." };
 
     const extension = path.extname(sourceRelative).toLowerCase();
-    if (extension !== ".png") return { passed: false, sourceRelative, commandResult, error: "ForgePilot v0.6 visual verification currently supports PNG screenshots." };
+    if (extension !== ".png") return { passed: false, sourceRelative, commandResult, error: "ForgePilot v0.7 visual verification currently supports PNG screenshots." };
 
     const evidenceRelative = path.posix.join(".forgepilot", "visual", safeName(taskId), `${safeName(checkpoint.name ?? path.basename(sourceRelative, extension))}.png`);
     const evidencePath = resolveInside(workspace, evidenceRelative);

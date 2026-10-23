@@ -1,16 +1,16 @@
-# ForgePilot v0.6.0
+# ForgePilot v0.7.0
 
-**A local-first software-engineering agent that proves code and UI changes with executable evidence.**
+**A local-first software-engineering agent that separates planning, implementation, debugging, review, and verification—and proves the result with executable evidence.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, independent verification, disposable Docker/Podman execution, and now **visual application verification**. A build can compile and still fail if its rendered state does not match the expected visual evidence.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, independent verification, disposable Docker/Podman execution, visual application verification, and in v0.7 a **five-role engineering team** with enforced separation of duties.
 
 ## Requirements
 
 - Node.js 22+
 - Git recommended
-- Docker or Podman for `--sandbox`
-- Ollama optional for local-AI planning/debugging
-- A multimodal Ollama model optional for `vision` assertions
+- Docker or Podman optional for `--sandbox`
+- Ollama optional for local-AI roles
+- A multimodal Ollama model optional for visual `vision` assertions
 - Chromium/Chrome optional for command-driven web screenshots
 
 ForgePilot has no npm runtime dependencies.
@@ -20,147 +20,169 @@ ForgePilot has no npm runtime dependencies.
 ```powershell
 npm test
 node src/cli.js doctor
-node src/cli.js analyze . --goal "improve visual verification"
+node src/cli.js analyze . --goal "improve multi-agent verification"
 ```
 
-Run the deterministic visual-repair demo:
+Run the deterministic multi-agent demo:
 
 ```powershell
-node src/cli.js run examples/visual-project/task.json `
-  --workspace examples/visual-project `
+node src/cli.js run examples/multi-agent-task.json `
+  --workspace .\work\multi-agent-demo `
+  --agents `
   --apply
 ```
 
-The first screenshot is deliberately wrong. ForgePilot records the pixel-diff failure, applies the bounded scripted repair, recaptures, and requires the visual gate to pass.
+The Reviewer deliberately rejects the first result. The separate Implementer performs the requested revision, Reviewer approves the second pass, and the Verifier audits the deterministic evidence.
 
-Compare two PNGs directly:
-
-```powershell
-node src/cli.js compare-images actual.png baseline.png `
-  --channel-threshold 2 `
-  --max-changed-ratio 0.005
-```
-
-## What v0.6 adds
+## v0.7 engineering flow
 
 ```text
-Repository / Goal
+Repository + Goal
       |
       v
-AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD
+Planner [READ ONLY]
       |
       v
-Screenshot Capture
-      |
-      +--> Dimensions / pixel probes / region means
-      +--> Frozen-baseline pixel diff
-      +--> Optional local Ollama vision verdict
+Implementer [proposes mutations]
       |
       v
-Independent Verification
+Guarded Executor
       |
-    PASS? ------------------ FAIL
-      |                       |
-      v                       v
-Sandbox promotion       bounded repair
-      |                       |
-      +-----------------------+
+      v
+Reviewer [READ ONLY]
+    /    \
+approve  request changes
+   |          |
+   |          v
+   |      Implementer revision
+   |          |
+   +----------+
+      |
+      v
+Tests / Build / Git / Visual Verification
+      |
+      v
+Verifier [READ ONLY]
+    /    \
+approve  reject
+   |       |
+   |       v
+   |    Debugger [repair proposal]
+   |       |
+   +-------+ → bounded re-verification
+      |
+      v
+PASS + evidence report
 ```
 
-### Visual checkpoints
+Agents never execute repository code directly. They return structured decisions or mutation proposals; ForgePilot's orchestrator applies policy and the guarded execution provider remains the only execution path.
 
-A task can declare one or more visual checkpoints:
+## Separation of duties
+
+| Role | Responsibility | Mutation authority |
+| --- | --- | --- |
+| Planner | Strategy, risks, acceptance criteria | None |
+| Implementer | Initial implementation and review revisions | May propose guarded actions |
+| Debugger | Failure-driven repair | May propose guarded actions |
+| Reviewer | Review changed state and request corrections | None |
+| Verifier | Audit deterministic evidence | None |
+
+Reviewer and Verifier responses are scanned for mutation payloads. A read-only role attempting to return `actions`, commands, patches, replacement content, or an action-shaped object fails closed.
+
+## Enable/disable the team
+
+Ollama tasks use the agent team by default in v0.7:
+
+```powershell
+node src/cli.js run task.json --planner ollama --model qwen2.5-coder:7b --apply
+```
+
+Disable it when comparing against the legacy single-planner path:
+
+```text
+--no-agents
+```
+
+Scripted tasks remain opt-in:
+
+```text
+--agents
+```
+
+or:
 
 ```json
 {
-  "visual": {
-    "checkpoints": [
-      {
-        "name": "main-ui",
-        "capture": {
-          "command": "node",
-          "args": ["tools/capture.js"],
-          "path": "out/main-ui.png"
-        },
-        "assertions": [
-          { "type": "dimensions", "width": 1280, "height": 720 },
-          {
-            "type": "pixel_diff",
-            "baseline": "baselines/main-ui.png",
-            "channelThreshold": 2,
-            "maxChangedRatio": 0.005
-          }
-        ]
-      }
-    ]
+  "agentTeam": {
+    "enabled": true,
+    "maxReviewRounds": 2,
+    "requireVerifierApproval": true
   }
 }
 ```
 
-Captured evidence is copied beneath:
+## Different local models for different roles
 
-```text
-.forgepilot/visual/<task-id>/
-```
-
-Sandboxed runs export those evidence images before the disposable workspace is cleaned up.
-
-### Frozen visual baselines
-
-ForgePilot fingerprints visual baselines before implementation. The implementation/repair loop is not permitted to modify those files, and the verifier checks the baseline hash again before pixel comparison.
-
-This prevents an agent from making a visual regression disappear by silently replacing the expected screenshot.
-
-### Deterministic assertions
-
-v0.6 supports:
-
-- `dimensions`
-- `pixel_diff`
-- `pixel_probe`
-- `region_mean`
-- `vision`
-
-The built-in PNG path reports changed-pixel ratio, mean delta, RMS delta, and max channel delta without an npm image dependency.
-
-### Optional local vision model
-
-A visual assertion may ask a local Ollama multimodal model to evaluate semantic UI criteria:
+You can run all roles on one model or specialize them:
 
 ```json
 {
-  "type": "vision",
-  "prompt": "Verify the dashboard is ready.",
-  "criteria": [
-    "No error dialog is visible",
-    "Status indicator is green"
-  ],
-  "minConfidence": 0.75
+  "planner": "ollama",
+  "model": "qwen2.5-coder:7b",
+  "agentTeam": {
+    "models": {
+      "planner": "qwen2.5-coder:7b",
+      "implementer": "qwen2.5-coder:14b",
+      "debugger": "qwen2.5-coder:14b",
+      "reviewer": "qwen2.5-coder:7b",
+      "verifier": "qwen2.5-coder:7b"
+    }
+  }
 }
 ```
 
-Configure it in `task.visual.provider` or with:
+CLI overrides:
 
 ```text
---vision-model MODEL
---vision-url URL
+--implementer-model MODEL
+--debugger-model MODEL
+--reviewer-model MODEL
+--verifier-model MODEL
 ```
 
-No model is contacted unless a `vision` assertion is configured and a provider/model is explicitly supplied.
+## Bounded disagreement
 
-## Sandboxed visual verification
+Reviewer change requests do not loop forever. `maxReviewRounds` limits Implementer revision rounds independently from the Debugger's `maxRepairs` budget.
 
-`--sandbox` still runs repository code in a disposable copy with Docker/Podman limits. Visual capture commands use that same execution provider, so screenshot-generation commands do not accidentally leak back to the host during a sandboxed run.
+A required Verifier rejection becomes a failed `agent_verifier` check. It can trigger a bounded Debugger repair, after which deterministic verification and a fresh Verifier audit run again.
+
+Set:
+
+```json
+{ "agentTeam": { "requireVerifierApproval": false } }
+```
+
+if you want the model verifier to be advisory while deterministic gates remain authoritative.
+
+## Test-first engineering
+
+The v0.4 guarantees remain intact:
+
+```text
+AUTHOR → RED → IMPLEMENT → GREEN → REGRESSION → BUILD
+```
+
+RED must fail for the expected reason. RED-proven tests are hashed and protected from Implementer/Debugger modification.
+
+## Disposable sandbox
+
+Use:
 
 ```powershell
-node src/cli.js run task.json `
-  --workspace .\repo `
-  --sandbox `
-  --sandbox-image my-prepulled-ui-test-image `
-  --apply
+node src/cli.js run task.json --sandbox --apply
 ```
 
-Default container policy remains:
+Repository execution occurs against a disposable copy through Docker/Podman. Defaults remain:
 
 ```text
 network       none
@@ -172,71 +194,61 @@ privileges    no-new-privileges
 image pull    never
 ```
 
-## Test-first engineering
+Only PASS results are promoted to the original workspace.
 
-The v0.4 workflow remains intact:
+## Visual verification
 
-```text
-AUTHOR regression test
-   ↓
-RED — must fail for the expected reason
-   ↓
-freeze RED-proven test
-   ↓
-IMPLEMENT
-   ↓
-GREEN → REGRESSION → BUILD
-   ↓
-visual verification (when configured)
-   ↓
-Git scope + test integrity + independent checks
+A task may capture PNG evidence and require:
+
+- dimensions
+- pixel diffs against frozen baselines
+- pixel probes
+- region averages
+- optional local multimodal vision verdicts
+
+Direct comparison remains available:
+
+```powershell
+node src/cli.js compare-images actual.png baseline.png `
+  --channel-threshold 2 `
+  --max-changed-ratio 0.005
 ```
 
-Both RED-proven tests and visual baselines are protected evidence.
+## Evidence reports
 
-## Repository intelligence and repair
-
-ForgePilot detects Node/TypeScript, .NET, Java/Maven/Gradle, Python, Go, Rust, Godot, and generic C/C++ projects. Failures—including visual failures—become structured evidence for the bounded repair loop:
+Reports live under:
 
 ```text
-failure → diagnose → surgical patch → retry → independently verify
+.forgepilot/runs/<timestamp>/
+    report.json
+    report.md
 ```
 
-Use `--max-repairs N`. Host mode supports `--resume`; sandbox resume remains intentionally deferred.
+v0.7 reports include:
 
-## Guarded actions
+- detected projects and selected repository context metadata;
+- test-first RED/GREEN/build evidence;
+- visual evidence metadata;
+- Git diff and unexpected-file classification;
+- repair attempts;
+- Planner → Implementer → Reviewer → Verifier handoffs;
+- review findings and revision rounds;
+- verifier audits;
+- role-policy violations;
+- role model identifiers.
 
-Normal implementation/repair actions remain:
+Source excerpts used by local models remain transient rather than being copied into the report.
 
-- `write_file`
-- `replace_text`
-- `run_command`
+## Safety model
 
-Normal commands run without a shell and remain allowlisted. The visual capture path has a separate allowlist that additionally permits Chromium/Chrome executables for screenshot capture; those browser commands are not exposed to ordinary `run_command` actions.
+- No shell-string execution.
+- Executables remain allowlisted.
+- Writes are constrained to the selected workspace.
+- Network is disabled by default in sandbox mode.
+- Checked-in visual baselines and RED-proven tests are protected.
+- Reviewer and Verifier are read-only by policy.
+- Review and repair loops are bounded independently.
+- Agents cannot directly commit or push.
+- PASS is still controlled by ForgePilot's deterministic state/evidence, not by an agent saying “done.”
 
-## Validation
-
-```text
-v0.1   6 tests
-v0.2  12 tests
-v0.3  18 tests
-v0.4  26 tests
-v0.5  33 tests
-v0.6  43 tests
-```
-
-The v0.6 tests add PNG codec/diff coverage, visual checkpoint evidence, baseline-integrity enforcement, protected-baseline policy, visual failure→repair→recapture, execution-provider routing, mocked Ollama vision evaluation, and fail-closed behavior without a configured vision provider.
-
-See:
-
-- `docs/VISUAL_VERIFICATION.md`
-- `docs/SANDBOX.md`
-- `docs/TEST_FIRST.md`
-- `docs/REPOSITORY_INTELLIGENCE.md`
-- `docs/ARCHITECTURE.md`
-- `docs/VALIDATION.md`
-- `docs/ROADMAP.md`
-
-## Next milestone — v0.7
-
-**Multi-Agent Engineering Roles**: separate Planner, Implementer, Debugger, Reviewer, and Verifier roles exchanging structured evidence instead of a single model owning the whole engineering narrative.
+See `docs/MULTI_AGENT.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md` for the full design.

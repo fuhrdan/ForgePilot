@@ -94,6 +94,30 @@ function renderMarkdown(report) {
         lines.push("");
     }
 
+    if (report.multiAgent?.enabled) {
+        lines.push("## Multi-Agent Engineering", "");
+        lines.push(`- Roles: Planner (read-only), Implementer (mutation), Debugger (mutation), Reviewer (read-only), Verifier (read-only)`);
+        lines.push(`- Handoffs recorded: ${report.multiAgent.handoffs?.length ?? 0}`);
+        lines.push(`- Review verdicts: ${report.multiAgent.reviews?.length ?? 0}`);
+        lines.push(`- Implementer revision rounds: ${report.multiAgent.revisions?.length ?? 0}/${report.multiAgent.maxReviewRounds ?? 0}`);
+        lines.push(`- Verifier gate: ${report.multiAgent.requireVerifierApproval ? "required" : "advisory"}`);
+        lines.push(`- Policy violations: ${report.multiAgent.policyViolations?.length ?? 0}`);
+        for (const review of report.multiAgent.reviews ?? []) {
+            lines.push(`- Reviewer round ${review.round}: **${review.verdict === "approve" ? "APPROVE" : "REQUEST CHANGES"}**${review.summary ? ` — ${review.summary}` : ""}`);
+            for (const finding of review.findings ?? []) lines.push(`  - ${finding.severity}: ${finding.path ? `\`${finding.path}\` — ` : ""}${finding.message}`);
+        }
+        for (const audit of report.multiAgent.verifierAudits ?? []) {
+            lines.push(`- Verifier audit ${audit.sequence}: **${audit.verdict === "approve" ? "APPROVE" : "REQUEST CHANGES"}**${audit.summary ? ` — ${audit.summary}` : ""}`);
+        }
+        if (report.multiAgent.handoffs?.length) {
+            lines.push("", "### Handoffs", "");
+            for (const handoff of report.multiAgent.handoffs) {
+                lines.push(`- ${handoff.sequence}. ${handoff.from} → ${handoff.to}: ${handoff.kind}`);
+            }
+        }
+        lines.push("");
+    }
+
     lines.push("## Actions", "");
     for (const action of report.actions) {
         const phase = action.phase ? ` (${action.phase}${action.attempt ? ` #${action.attempt}` : ""})` : "";
@@ -129,7 +153,7 @@ function renderMarkdown(report) {
             const value = report.coverage[metric];
             if (value && value.total > 0) lines.push(`- ${metric}: ${value.covered}/${value.total} (${value.pct}%)`);
         }
-    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.6.");
+    } else lines.push("No supported coverage artifact was found; coverage is informational in v0.7.");
 
     lines.push("", "## Git", "");
     lines.push(`- Repository: ${report.verification.git.isRepository ? "yes" : "no"}`);

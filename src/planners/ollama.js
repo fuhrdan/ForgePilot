@@ -11,6 +11,19 @@ function validatePlan(plan) {
     return plan;
 }
 
+function validateStrategy(strategy) {
+    if (!strategy || typeof strategy !== "object") throw new Error("Planner strategy response is not an object.");
+    if (!Array.isArray(strategy.risks)) strategy.risks = [];
+    if (!Array.isArray(strategy.acceptanceCriteria)) strategy.acceptanceCriteria = [];
+    return strategy;
+}
+
+function validateVerdict(verdict) {
+    if (!verdict || typeof verdict !== "object") throw new Error("Agent verdict response is not an object.");
+    if (!Array.isArray(verdict.findings)) verdict.findings = [];
+    return verdict;
+}
+
 function bounded(value, max = 16000) {
     const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     return text.length <= max ? text : `${text.slice(0, max)}\n...[truncated]`;
@@ -23,7 +36,7 @@ export class OllamaPlanner {
         this.baseUrl = baseUrl.replace(/\/$/, "");
     }
 
-    async generate(prompt) {
+    async generate(prompt, validator = (value) => value) {
         const response = await fetch(`${this.baseUrl}/api/generate`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -35,15 +48,39 @@ export class OllamaPlanner {
         }
 
         const body = await response.json();
-        return validatePlan(extractJson(body.response ?? ""));
+        return validator(extractJson(body.response ?? ""));
     }
 
     async plan(task, context) {
-        return this.generate(buildPlanPrompt(task, context));
+        return this.generate(buildPlanPrompt(task, context), validatePlan);
+    }
+
+    async strategy(task, context) {
+        return this.generate(buildStrategyPrompt(task, context), validateStrategy);
+    }
+
+    async implement(task, context, strategy) {
+        return this.generate(buildImplementationPrompt(task, context, strategy), validatePlan);
+    }
+
+    async debug(task, context, evidence, attempt, originalPlan) {
+        return this.repair(task, context, evidence, attempt, originalPlan);
     }
 
     async repair(task, context, evidence, attempt, originalPlan) {
-        return this.generate(buildRepairPrompt(task, context, evidence, attempt, originalPlan));
+        return this.generate(buildRepairPrompt(task, context, evidence, attempt, originalPlan), validatePlan);
+    }
+
+    async review(task, context, evidence, round) {
+        return this.generate(buildReviewPrompt(task, context, evidence, round), validateVerdict);
+    }
+
+    async revise(task, context, review, round, originalPlan) {
+        return this.generate(buildRevisionPrompt(task, context, review, round, originalPlan), validatePlan);
+    }
+
+    async audit(task, context, evidence) {
+        return this.generate(buildVerifierPrompt(task, context, evidence), validateVerdict);
     }
 }
 
@@ -95,6 +132,22 @@ function repositorySection(context) {
         `Selected source context:${selected || "\n(none)"}\n`;
 }
 
+function buildStrategyPrompt(task, context) {
+    return `You are ForgePilot's PLANNER. You are read-only: do not return actions, patches, commands, or file contents. Produce JSON only.\n\n` +
+        `Goal:\n${task.goal}\n\n` + repositorySection(context) + `\n` +
+        `Return exactly this shape:\n` +
+        `{\n  "goal": "...",\n  "approach": "concise architecture/implementation strategy",\n  "risks": ["..."],\n  "acceptanceCriteria": ["..."]\n}\n\n` +
+        `Focus on what should be accomplished and how success is judged. The separate Implementer role will decide exact file mutations.`;
+}
+
+function buildImplementationPrompt(task, context, strategy) {
+    return `You are ForgePilot's IMPLEMENTER. Convert the Planner strategy into a safe executable implementation plan. Produce JSON only.\n\n` +
+        `Goal:\n${task.goal}\n\nPlanner strategy:\n${bounded(strategy)}\n\n` + repositorySection(context) + `\n` +
+        `Return exactly this shape:\n` +
+        `{\n  "goal": "...",\n  "rationale": "short explanation",\n  "actions": [...],\n  "verify": [...]\n}\n\n` +
+        actionSchema() + `Verification supports file_exists, file_contains, command, and git_diff checks.\n\n` + safetyRules();
+}
+
 function buildPlanPrompt(task, context) {
     return `You are ForgePilot's software-engineering planner. Produce JSON only.\n\n` +
         `Goal:\n${task.goal}\n\n` +
@@ -107,7 +160,7 @@ function buildPlanPrompt(task, context) {
 }
 
 function buildRepairPrompt(task, context, evidence, attempt, originalPlan) {
-    return `You are ForgePilot's debugger. A previous implementation or verification step failed. Produce JSON only.\n\n` +
+    return `You are ForgePilot's DEBUGGER. A previous implementation or verification step failed. Produce JSON only.\n\n` +
         `Goal:\n${task.goal}\n\n` +
         `Repair attempt: ${attempt}\n\n` +
         repositorySection(context) + `\n` +
@@ -117,4 +170,32 @@ function buildRepairPrompt(task, context, evidence, attempt, originalPlan) {
         `{\n  "rationale": "diagnosis and repair strategy",\n  "actions": [...],\n  "verify": []\n}\n\n` +
         `Make the smallest change that plausibly fixes the supplied evidence. Do not claim success; ForgePilot will rerun the failing step independently.\n\n` +
         actionSchema() + safetyRules();
+}
+
+function buildReviewPrompt(task, context, evidence, round) {
+    return `You are ForgePilot's REVIEWER. You are strictly read-only. Never return actions, patches, commands, replacement code, or file contents. Produce JSON only.\n\n` +
+        `Goal:\n${task.goal}\n\nReview round: ${round}\n\n` + repositorySection(context) + `\n` +
+        `Implementation evidence:\n${bounded(evidence)}\n\n` +
+        `Return exactly this shape:\n` +
+        `{\n  "verdict": "approve" | "request_changes",\n  "summary": "concise review",\n  "findings": [{"severity":"info|warning|error","path":"relative/path or null","message":"specific issue"}]\n}\n\n` +
+        `Request changes only for concrete correctness, maintainability, scope, or acceptance-criteria issues. Do not propose executable mutations.`;
+}
+
+function buildRevisionPrompt(task, context, review, round, originalPlan) {
+    return `You are ForgePilot's IMPLEMENTER responding to a read-only code review. Produce JSON only.\n\n` +
+        `Goal:\n${task.goal}\n\nRevision round: ${round}\n\n` + repositorySection(context) + `\n` +
+        `Original implementation plan:\n${bounded(originalPlan)}\n\n` +
+        `Reviewer findings:\n${bounded(review)}\n\n` +
+        `Return exactly this shape:\n` +
+        `{\n  "rationale": "how the review findings are addressed",\n  "actions": [...],\n  "verify": []\n}\n\n` +
+        `Address only substantiated review findings and keep the revision minimal.\n\n` + actionSchema() + safetyRules();
+}
+
+function buildVerifierPrompt(task, context, evidence) {
+    return `You are ForgePilot's VERIFIER. You are strictly read-only and independent from the Implementer. Evaluate the deterministic evidence; never return actions, commands, patches, or code. Produce JSON only.\n\n` +
+        `Goal:\n${task.goal}\n\n` + repositorySection(context) + `\n` +
+        `Deterministic verification evidence:\n${bounded(evidence)}\n\n` +
+        `Return exactly this shape:\n` +
+        `{\n  "verdict": "approve" | "request_changes",\n  "summary": "whether the evidence demonstrates the goal",\n  "findings": [{"severity":"info|warning|error","path":"relative/path or null","message":"specific evidence gap"}]\n}\n\n` +
+        `Do not override failing deterministic checks. Approve only when the supplied evidence is coherent and sufficient.`;
 }

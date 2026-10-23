@@ -1,4 +1,4 @@
-# ForgePilot v0.6 Validation
+# ForgePilot v0.7 Validation
 
 ## Automated suite
 
@@ -8,65 +8,67 @@ Run:
 npm test
 ```
 
-Expected release result:
+Release acceptance requires **51/51 tests**: all legacy v0.1–v0.6 coverage plus 8 v0.7 multi-agent tests.
 
-```text
-tests 43
-pass 42
-fail 0
-```
+v0.7 adds coverage for:
 
-All v0.1–v0.5 tests are preserved. v0.6 adds coverage for:
+- read-only role-policy enforcement;
+- Planner → Implementer structured handoffs;
+- Reviewer request-changes → Implementer revision → Reviewer approval;
+- malicious Reviewer mutation payload rejection without execution;
+- Verifier rejection → Debugger repair → independent re-audit;
+- review-round budget enforcement independent of repair budget;
+- Ollama structured role prompts for Planner, Implementer, Reviewer, and Verifier;
+- preservation of the existing 43 v0.1–v0.6 tests.
 
-- dependency-free PNG encode/decode round-trip;
-- changed-pixel and channel-delta metrics;
-- visual evidence capture and deterministic assertions;
-- frozen-baseline tamper detection;
-- implementation policy blocking baseline rewrites;
-- visual regression failure → bounded repair → recapture → PASS;
-- visual capture routing through the configured execution provider;
-- local Ollama multimodal request/structured verdict parsing via a mocked endpoint;
-- fail-closed `vision` assertions when no provider exists.
+## Multi-agent CLI acceptance
 
-## Visual CLI acceptance
-
-The included `examples/visual-project` intentionally renders the wrong color first. Run:
+Run:
 
 ```powershell
-node src/cli.js run examples/visual-project/task.json `
-  --workspace examples/visual-project `
+mkdir work\multi-agent-demo
+node src/cli.js run examples/multi-agent-task.json `
+  --workspace .\work\multi-agent-demo `
+  --agents `
   --apply
 ```
 
 Acceptance requires:
 
-1. initial PNG capture succeeds;
-2. `pixel_diff` fails against the frozen baseline;
-3. failure metrics enter the repair evidence;
-4. the scripted repair changes the renderer, not the baseline;
-5. the PNG is recaptured;
-6. dimensions, pixel diff, and region mean all pass;
-7. report result is PASS and an evidence screenshot is recorded.
+1. Planner and Implementer handoffs are recorded;
+2. initial `release-note.txt` contains `DRAFT`;
+3. Reviewer round 1 requests changes;
+4. Reviewer never executes a mutation itself;
+5. Implementer revision replaces `DRAFT` with `VERIFIED`;
+6. Reviewer round 2 approves;
+7. deterministic file-content checks pass;
+8. Verifier approves the evidence;
+9. final result is PASS;
+10. Markdown/JSON reports include handoffs, reviews, verifier audit, and zero policy violations.
 
-## Direct image-comparison acceptance
+## Read-only attack acceptance
 
-Run `compare-images` against identical images and require PASS, then against differing images with `--max-changed-ratio 0` and require FAIL/exit code 2.
+The automated suite supplies a Reviewer verdict containing a hidden `write_file` action. Acceptance requires ForgePilot to:
 
-## Sandbox note
+- reject the verdict as a role-policy violation;
+- not create the requested malicious file;
+- fail the task closed.
 
-The build environment used for these releases may not expose Docker/Podman. Container command construction and provider routing remain covered by the v0.5 injected-runtime tests. On a Docker/Podman host, visual capture commands inherit the same sandbox provider and captured evidence is exported before sandbox cleanup.
+## Legacy acceptance
+
+The v0.6 visual failure→repair demo and direct `compare-images` PASS/FAIL checks remain part of regression acceptance. Sandboxed execution-provider tests remain required even when Docker/Podman is unavailable on the build host.
 
 ## Archive acceptance
 
 Before release:
 
 1. syntax-check every `.js` file;
-2. run all 43 tests in the working tree;
-3. run the visual CLI failure→repair acceptance;
-4. run direct `compare-images` PASS and FAIL checks;
-5. verify CLI version prints `0.6.0`;
+2. run the complete test suite in the working tree;
+3. run the multi-agent CLI reviewer→revision→verifier acceptance;
+4. verify CLI version prints `0.7.0`;
+5. verify report output includes the Multi-Agent Engineering section;
 6. create the ZIP;
 7. extract the exact ZIP to a clean directory;
-8. rerun all 43 tests from the extracted archive;
-9. rerun the visual CLI acceptance from the extracted archive;
-10. verify no transient `.forgepilot/` state is included in the archive.
+8. rerun the complete test suite from the extracted archive;
+9. rerun the multi-agent CLI acceptance from the extracted archive;
+10. verify no transient `.forgepilot/`, `work/`, or `node_modules/` state is included in the release archive.

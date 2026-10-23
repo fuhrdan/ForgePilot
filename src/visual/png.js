@@ -47,7 +47,7 @@ function channelsForColorType(colorType) {
     if (colorType === 2) return 3;
     if (colorType === 4) return 2;
     if (colorType === 6) return 4;
-    throw new Error(`Unsupported PNG color type ${colorType}; ForgePilot v0.6 supports grayscale, RGB, grayscale+alpha, and RGBA.`);
+    throw new Error(`Unsupported PNG color type ${colorType}; ForgePilot v0.7 supports grayscale, RGB, grayscale+alpha, and RGBA.`);
 }
 
 export async function decodePng(input) {
@@ -81,8 +81,8 @@ export async function decodePng(input) {
     }
 
     if (!width || !height) throw new Error("PNG is missing a valid IHDR chunk.");
-    if (bitDepth !== 8) throw new Error(`Unsupported PNG bit depth ${bitDepth}; ForgePilot v0.6 supports 8-bit channels.`);
-    if (interlace !== 0) throw new Error("Interlaced PNGs are not supported in ForgePilot v0.6.");
+    if (bitDepth !== 8) throw new Error(`Unsupported PNG bit depth ${bitDepth}; ForgePilot v0.7 supports 8-bit channels.`);
+    if (interlace !== 0) throw new Error("Interlaced PNGs are not supported in ForgePilot v0.7.");
 
     const channels = channelsForColorType(colorType);
     const bytesPerPixel = channels;

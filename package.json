@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.6.0",
-  "description": "Local-first verified software engineering agent with visual regression evidence, optional local vision verification, disposable sandboxes, repository intelligence, test-first gates, bounded repair, and independent verification.",
+  "version": "0.7.0",
+  "description": "Local-first verified software engineering agent with separated Planner/Implementer/Debugger/Reviewer/Verifier roles, visual regression evidence, disposable sandboxes, test-first gates, bounded repair, and independent verification.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

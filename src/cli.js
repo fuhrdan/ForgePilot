@@ -14,8 +14,9 @@ import { createSandboxSession } from "./sandbox/session.js";
 import { OllamaVisionProvider } from "./visual/ollama.js";
 import { decodePng } from "./visual/png.js";
 import { compareImages } from "./visual/diff.js";
+import { AgentTeam } from "./agents/team.js";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -24,11 +25,14 @@ function usage() {
 `  forgepilot doctor\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
-`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
+`  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--apply]\n` +
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Visual verification (v0.6):\n` +
+`Multi-agent engineering (v0.7):\n` +
+`  Planner, Implementer, Debugger, Reviewer, and Verifier roles exchange structured evidence.\n` +
+`  Reviewer/Verifier are read-only; use --agents to enable for scripted tasks or --no-agents to disable the default Ollama team.\n\n` +
+`Visual verification (v0.6+):\n` +
 `  task.visual can capture PNG screenshots, compare baselines, probe pixels/regions, and optionally ask a local Ollama vision model for a verdict.\n` +
 `  Checked-in visual baselines are frozen before implementation and cannot be modified by implementation/repair actions.\n\n` +
 `Sandbox (v0.5+):\n` +
@@ -46,7 +50,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "sandbox", "sandbox-keep"]);
+    const flags = new Set(["apply", "resume", "sandbox", "sandbox-keep", "agents", "no-agents"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -136,6 +140,31 @@ async function runTask(taskFile, options) {
 
     const plannerName = options.planner ?? task.planner ?? "scripted";
     const planner = buildPlanner(plannerName, task, options);
+    const rawAgentTeam = task.agentTeam === true ? {} : (task.agentTeam && typeof task.agentTeam === "object" ? task.agentTeam : {});
+    const agentsEnabled = options["no-agents"]
+        ? false
+        : Boolean(options.agents || rawAgentTeam.enabled === true || (plannerName === "ollama" && rawAgentTeam.enabled !== false));
+    const maxReviewRounds = Math.max(0, Number(options["max-review-rounds"] ?? rawAgentTeam.maxReviewRounds ?? 2));
+    if (!Number.isFinite(maxReviewRounds)) throw new Error("--max-review-rounds must be a number.");
+    const roleAdapters = {};
+    if (agentsEnabled && plannerName === "ollama") {
+        const roleModels = rawAgentTeam.models ?? {};
+        const baseUrl = options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434";
+        const fallbackModel = options.model ?? task.model ?? "qwen2.5-coder:7b";
+        const modelFor = (role, optionName) => options[optionName] ?? roleModels[role] ?? fallbackModel;
+        roleAdapters.planner = new OllamaPlanner({ model: modelFor("planner", "model"), baseUrl });
+        roleAdapters.implementer = new OllamaPlanner({ model: modelFor("implementer", "implementer-model"), baseUrl });
+        roleAdapters.debugger = new OllamaPlanner({ model: modelFor("debugger", "debugger-model"), baseUrl });
+        roleAdapters.reviewer = new OllamaPlanner({ model: modelFor("reviewer", "reviewer-model"), baseUrl });
+        roleAdapters.verifier = new OllamaPlanner({ model: modelFor("verifier", "verifier-model"), baseUrl });
+    }
+    const agentTeam = new AgentTeam({
+        adapter: planner,
+        adapters: roleAdapters,
+        enabled: agentsEnabled,
+        maxReviewRounds,
+        requireVerifierApproval: rawAgentTeam.requireVerifierApproval !== false
+    });
     const visionProvider = buildVisionProvider(task, options);
     const taskId = createTaskId(taskPath, task);
     const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? 2));
@@ -143,7 +172,7 @@ async function runTask(taskFile, options) {
 
     const rawSandbox = task.sandbox === true ? {} : (task.sandbox && typeof task.sandbox === "object" ? task.sandbox : {});
     const sandboxEnabled = Boolean(options.sandbox || task.sandbox === true || rawSandbox.enabled === true);
-    if (sandboxEnabled && options.resume) throw new Error("Sandbox resume is not supported in v0.5; rerun the task in a fresh disposable sandbox or use host mode with --resume.");
+    if (sandboxEnabled && options.resume) throw new Error("Sandbox resume is not supported in v0.7; rerun the task in a fresh disposable sandbox or use host mode with --resume.");
 
     let sandboxSession = null;
     let workingWorkspace = originalWorkspace;
@@ -181,6 +210,7 @@ async function runTask(taskFile, options) {
     console.log(`Goal: ${task.goal ?? "(no goal supplied)"}`);
     console.log(`Workspace: ${originalWorkspace}`);
     console.log(`Planner: ${plannerName}`);
+    console.log(`Agent team: ${agentsEnabled ? `ON (review rounds ${maxReviewRounds}, verifier gate ${agentTeam.requireVerifierApproval ? "required" : "advisory"})` : "OFF"}`);
     console.log(`Repair budget: ${maxRepairs}`);
     if (sandboxEnabled) console.log(`Sandbox: ${options.apply ? `${sandboxInfo.provider.runtime ?? "planned"} / ${sandboxInfo.provider.image ?? rawSandbox.image ?? "node:22-bookworm"}` : "planned"}`);
     console.log(`Mode: ${options.apply ? "APPLY" : "PLAN ONLY"}${options.resume ? " / RESUME" : ""}\n`);
@@ -198,7 +228,8 @@ async function runTask(taskFile, options) {
             taskId,
             resumeState,
             executionProvider,
-            visionProvider
+            visionProvider,
+            agentTeam
         });
 
         console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
@@ -239,6 +270,7 @@ async function runTask(taskFile, options) {
             coverage: outcome.coverage,
             visual: outcome.visual ?? outcome.verification.visual ?? null,
             visionProvider: visionProvider?.describe?.() ?? null,
+            multiAgent: outcome.multiAgent ?? agentTeam.snapshot(),
             sandbox: sandboxInfo
         };
 

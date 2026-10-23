@@ -1,0 +1,75 @@
+{
+  "goal": "Create a reviewed release note artifact that clearly says READY FOR REVIEW and VERIFIED.",
+  "rationale": "Demonstrate Planner/Implementer/Reviewer/Verifier separation with one bounded review revision.",
+  "actions": [
+    {
+      "type": "write_file",
+      "path": "release-note.txt",
+      "content": "READY FOR REVIEW\nDRAFT\n"
+    }
+  ],
+  "verify": [
+    {
+      "type": "file_contains",
+      "path": "release-note.txt",
+      "text": "READY FOR REVIEW"
+    },
+    {
+      "type": "file_contains",
+      "path": "release-note.txt",
+      "text": "VERIFIED"
+    }
+  ],
+  "agentTeam": {
+    "enabled": true,
+    "maxReviewRounds": 2,
+    "requireVerifierApproval": true,
+    "strategy": "Create the smallest artifact, then require independent review and verification.",
+    "acceptanceCriteria": [
+      "release-note.txt exists",
+      "contains READY FOR REVIEW",
+      "contains VERIFIED",
+      "Reviewer approves after revision",
+      "Verifier approves deterministic evidence"
+    ],
+    "reviews": [
+      {
+        "verdict": "request_changes",
+        "summary": "The artifact still carries the DRAFT marker.",
+        "findings": [
+          {
+            "severity": "error",
+            "path": "release-note.txt",
+            "message": "Replace DRAFT with VERIFIED before approval."
+          }
+        ]
+      },
+      {
+        "verdict": "approve",
+        "summary": "The requested review correction is present.",
+        "findings": []
+      }
+    ],
+    "revisions": [
+      {
+        "rationale": "Apply the Reviewer's single requested correction.",
+        "actions": [
+          {
+            "type": "replace_text",
+            "path": "release-note.txt",
+            "find": "DRAFT",
+            "replace": "VERIFIED",
+            "expectedOccurrences": 1
+          }
+        ]
+      }
+    ],
+    "verifierAudits": [
+      {
+        "verdict": "approve",
+        "summary": "Both deterministic content checks passed after the reviewed revision.",
+        "findings": []
+      }
+    ]
+  }
+}

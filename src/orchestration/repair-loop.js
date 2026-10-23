@@ -72,7 +72,7 @@ function verificationOptions(task, gitBaseline, executionProvider = null) {
     };
 }
 
-async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider = null, visionProvider = null, taskId = "task") {
+async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider = null, visionProvider = null, taskId = "task", agentTeam = null) {
     const verification = await verifyPlan(plan, workspace, verificationOptions(task, gitBaseline, executionProvider));
     if (testSnapshot) {
         const integrity = await verifyProtectedTestSnapshot(workspace, testSnapshot);
@@ -94,6 +94,38 @@ async function verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapsh
     }
     verification.passed = verification.passed && visualEvidence.passed;
     verification.visual = visualEvidence;
+
+    if (agentTeam?.enabled) {
+        const auditEvidence = {
+            deterministicPassed: verification.passed,
+            checks: verification.checks.map((check) => ({
+                type: check.type,
+                phase: check.phase ?? null,
+                status: check.status,
+                error: check.error ?? null
+            })),
+            gitDiff: verification.gitDiff ? {
+                available: verification.gitDiff.available,
+                changedFiles: verification.gitDiff.changedFiles?.map((item) => ({ path: item.path, status: item.status })) ?? [],
+                unexpectedFiles: verification.gitDiff.unexpectedFiles?.map((item) => ({ path: item.path, status: item.status })) ?? []
+            } : null
+        };
+        const audit = await agentTeam.audit(task, await contextFor(workspace, task), auditEvidence);
+        const auditPassed = audit.verdict === "approve" || !agentTeam.requireVerifierApproval;
+        verification.checks.push({
+            index: verification.checks.length,
+            type: "agent_verifier",
+            phase: "agent-verifier",
+            status: auditPassed ? "passed" : "failed",
+            verdict: audit.verdict,
+            summary: audit.summary,
+            findings: audit.findings,
+            advisory: !agentTeam.requireVerifierApproval,
+            policyPassed: audit.policyPassed
+        });
+        verification.passed = verification.passed && auditPassed;
+        verification.agentVerifier = audit;
+    }
     return verification;
 }
 
@@ -118,10 +150,14 @@ export async function runTaskWithRepairs({
     taskId,
     resumeState = null,
     executionProvider = null,
-    visionProvider = null
+    visionProvider = null,
+    agentTeam = null
 }) {
     const initialContext = await contextFor(workspace, task);
-    const planned = resumeState?.plan ?? await planner.plan(task, initialContext);
+    if (agentTeam?.enabled && resumeState?.multiAgent) agentTeam.restore(resumeState.multiAgent);
+    const planned = resumeState?.plan ?? (agentTeam?.enabled
+        ? await agentTeam.prepare(task, initialContext)
+        : await planner.plan(task, initialContext));
     const intendedSourcePaths = (planned.actions ?? [])
         .filter((action) => ["write_file", "replace_text"].includes(action.type) && action.path)
         .map((action) => action.path);
@@ -155,12 +191,13 @@ export async function runTaskWithRepairs({
             repository: initialContext.repository,
             testFirst: testFirst ? { enabled: true, authoring: testAuthoring, red: null, testOnlyDiff: null } : null,
             visual: visualEvidence,
-            coverage: { available: false }
+            coverage: { available: false },
+            multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : null
         };
     }
 
     let state = resumeState ?? {
-        version: 5,
+        version: 6,
         taskId,
         planner: plannerName,
         plan,
@@ -174,13 +211,15 @@ export async function runTaskWithRepairs({
         lastFailure: null,
         testFirst: null,
         testSnapshot: null,
-        visualBaselineSnapshot
+        visualBaselineSnapshot,
+        multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : null
     };
 
     state.status = "running";
     state.plan = plan;
     state.gitBaseline = gitBaseline;
     state.visualBaselineSnapshot = visualBaselineSnapshot;
+    state.multiAgent = agentTeam?.enabled ? agentTeam.snapshot() : null;
     state = await saveState(workspace, state);
 
     let testFirstEvidence = state.testFirst ?? null;
@@ -198,7 +237,7 @@ export async function runTaskWithRepairs({
                 checks: authoring.map((item, index) => ({ index, type: "test_authoring", phase: "author", status: item.status, ...item }))
             });
             testFirstEvidence = { enabled: true, authoring, testOnlyDiff: null, red: null };
-            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, lastFailure: { kind: "test_authoring", authoring } });
+            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: { kind: "test_authoring", authoring } });
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
@@ -210,7 +249,7 @@ export async function runTaskWithRepairs({
                 checks: [{ index: 0, type: "test_change_policy", phase: "author", status: "failed", ...testOnlyDiff }]
             });
             testFirstEvidence = { enabled: true, authoring, testOnlyDiff, red: null };
-            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, lastFailure: { kind: "test_change_policy", testOnlyDiff } });
+            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: { kind: "test_change_policy", testOnlyDiff } });
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
@@ -223,12 +262,12 @@ export async function runTaskWithRepairs({
                 checks: [{ index: 0, type: "test_gate", phase: "red", status: "failed", ...red }],
                 testFirst: testFirstEvidence
             });
-            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, lastFailure: { kind: "red_gate", red } });
+            state = await saveState(workspace, { ...state, status: "failed", testFirst: testFirstEvidence, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: { kind: "red_gate", red } });
             return { plan, actions: [], verification, repairs: [], repairCount: 0, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: { available: false } };
         }
 
         testSnapshot = await captureProtectedTestSnapshot(workspace, protectedTestFiles);
-        state = await saveState(workspace, { ...state, testFirst: testFirstEvidence, testSnapshot, lastFailure: null });
+        state = await saveState(workspace, { ...state, testFirst: testFirstEvidence, testSnapshot, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: null });
     }
 
     const actions = Array.isArray(state.actions) ? [...state.actions] : [];
@@ -260,7 +299,9 @@ export async function runTaskWithRepairs({
 
             while (repairCount < maxRepairs) {
                 repairCount++;
-                const repairPlan = await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
+                const repairPlan = agentTeam?.enabled
+                    ? await agentTeam.debug(task, await contextFor(workspace, task), evidence, repairCount, plan)
+                    : await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
                 const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider);
                 const repairActionsPassed = repairResults.every((item) => item.status === "passed");
                 const repairRecord = {
@@ -295,25 +336,85 @@ export async function runTaskWithRepairs({
                 }
 
                 repairs.push(repairRecord);
-                state = await saveState(workspace, { ...state, actionIndex, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, lastFailure: repaired ? null : evidence });
+                state = await saveState(workspace, { ...state, actionIndex, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: repaired ? null : evidence });
                 if (repaired) break;
             }
 
             if (!repaired) {
                 const verification = await earlyFailure({ workspace, gitBaseline, task, reason: "repair budget exhausted after action failure" });
-                state = await saveState(workspace, { ...state, actionIndex, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, status: "failed", lastFailure: evidence });
+                state = await saveState(workspace, { ...state, actionIndex, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, status: "failed", lastFailure: evidence });
                 return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, coverage: await collectCoverage(workspace) };
             }
         }
 
-        state = await saveState(workspace, { ...state, actionIndex: actionIndex + 1, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, lastFailure: null });
+        state = await saveState(workspace, { ...state, actionIndex: actionIndex + 1, actions, repairs, repairCount, testFirst: testFirstEvidence, testSnapshot, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null, lastFailure: null });
     }
 
-    let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId);
-    while (!verification.passed && repairCount < maxRepairs) {
+    let agentReview = null;
+    if (agentTeam?.enabled) {
+        let reviewRound = 0;
+        while (true) {
+            reviewRound++;
+            const diff = await summarizeGitDiff(workspace, gitBaseline, task.expectedChangePaths ?? []);
+            const reviewEvidence = {
+                plan: { goal: plan.goal, rationale: plan.rationale, actionCount: plan.actions.length, verifyCount: plan.verify.length },
+                actions: actions.map((item) => ({ type: item.type, status: item.status, phase: item.phase ?? null, path: item.path ?? null })),
+                changedFiles: diff.available ? diff.changedFiles.map((item) => ({ path: item.path, status: item.status })) : [],
+                unexpectedFiles: diff.available ? diff.unexpectedFiles.map((item) => ({ path: item.path, status: item.status })) : [],
+                testFirst: testFirstEvidence ? { enabled: true, redPassed: Boolean(testFirstEvidence.red?.validRed) } : { enabled: false }
+            };
+            agentReview = await agentTeam.review(task, await contextFor(workspace, task), reviewEvidence, reviewRound);
+            if (agentReview.verdict === "approve") break;
+
+            if (!agentReview.policyPassed) {
+                const verification = await earlyFailure({
+                    workspace, gitBaseline, task,
+                    reason: "reviewer violated read-only role policy",
+                    checks: [{ index: 0, type: "agent_review", phase: "review", status: "failed", verdict: agentReview.verdict, findings: agentReview.findings }]
+                });
+                state = await saveState(workspace, { ...state, status: "failed", multiAgent: agentTeam.snapshot(), lastFailure: { kind: "agent_review_policy", review: agentReview } });
+                return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: { enabled: Boolean(visual?.enabled), passed: false, checks: [], evidencePaths: [] }, coverage: await collectCoverage(workspace), multiAgent: agentTeam.snapshot() };
+            }
+
+            if (reviewRound > agentTeam.maxReviewRounds) {
+                const verification = await earlyFailure({
+                    workspace, gitBaseline, task,
+                    reason: "review change-request budget exhausted",
+                    checks: [{ index: 0, type: "agent_review", phase: "review", status: "failed", verdict: agentReview.verdict, findings: agentReview.findings }]
+                });
+                state = await saveState(workspace, { ...state, status: "failed", multiAgent: agentTeam.snapshot(), lastFailure: { kind: "agent_review", review: agentReview } });
+                return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: { enabled: Boolean(visual?.enabled), passed: false, checks: [], evidencePaths: [] }, coverage: await collectCoverage(workspace), multiAgent: agentTeam.snapshot() };
+            }
+
+            const revision = await agentTeam.revise(task, await contextFor(workspace, task), agentReview, reviewRound, plan);
+            const revisionResults = await executeRepairActions(revision, workspace, true, protectedPaths, executionProvider);
+            for (const [revisionIndex, result] of revisionResults.entries()) {
+                actions.push({ ...result, index: actions.length, phase: "review-revision", attempt: reviewRound, revisionIndex });
+            }
+            if (revision.actions.length === 0 || revisionResults.some((item) => item.status === "failed")) {
+                const verification = await earlyFailure({
+                    workspace, gitBaseline, task,
+                    reason: revision.actions.length === 0 ? "review requested changes but implementer returned no revision actions" : "review revision action failed",
+                    checks: [{ index: 0, type: "agent_review_revision", phase: "review", status: "failed" }]
+                });
+                state = await saveState(workspace, { ...state, status: "failed", actions, multiAgent: agentTeam.snapshot(), lastFailure: { kind: "agent_review_revision", review: agentReview } });
+                return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: { enabled: Boolean(visual?.enabled), passed: false, checks: [], evidencePaths: [] }, coverage: await collectCoverage(workspace), multiAgent: agentTeam.snapshot() };
+            }
+            state = await saveState(workspace, { ...state, actions, multiAgent: agentTeam.snapshot(), lastFailure: null });
+        }
+    }
+
+    let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam);
+    while (
+        !verification.passed &&
+        repairCount < maxRepairs &&
+        !failedChecks(verification).some((check) => check.type === "agent_verifier" && check.policyPassed === false)
+    ) {
         repairCount++;
         const evidence = { kind: "verification", failedChecks: failedChecks(verification) };
-        const repairPlan = await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
+        const repairPlan = agentTeam?.enabled
+                    ? await agentTeam.debug(task, await contextFor(workspace, task), evidence, repairCount, plan)
+                    : await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
         const repairResults = await executeRepairActions(repairPlan, workspace, true, protectedPaths, executionProvider);
         const repairRecord = {
             attempt: repairCount,
@@ -326,7 +427,7 @@ export async function runTaskWithRepairs({
         repairs.push(repairRecord);
 
         if (repairResults.every((item) => item.status === "passed") && repairPlan.actions.length > 0) {
-            verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId);
+            verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam);
             repairRecord.retry = { passed: verification.passed, failedChecks: failedChecks(verification) };
         }
 
@@ -338,6 +439,7 @@ export async function runTaskWithRepairs({
             repairCount,
             testFirst: testFirstEvidence,
             testSnapshot,
+            multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : state.multiAgent ?? null,
             lastFailure: verification.passed ? null : { kind: "verification", failedChecks: failedChecks(verification) }
         });
     }
@@ -351,9 +453,10 @@ export async function runTaskWithRepairs({
         repairCount,
         testFirst: testFirstEvidence,
         testSnapshot,
+        multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : null,
         status: verification.passed ? "passed" : "failed",
         lastFailure: verification.passed ? null : { kind: "verification", failedChecks: failedChecks(verification) }
     });
 
-    return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: verification.visual ?? { enabled: false, passed: true, checks: [], evidencePaths: [] }, coverage };
+    return { plan, actions, verification, repairs, repairCount, resumed: Boolean(resumeState), state, repository: initialContext.repository, testFirst: testFirstEvidence, visual: verification.visual ?? { enabled: false, passed: true, checks: [], evidencePaths: [] }, coverage, multiAgent: agentTeam?.enabled ? agentTeam.snapshot() : null };
 }

@@ -1,24 +1,28 @@
 # Changelog
 
-## v0.6.0 — Visual Application Verification
+## 0.7.0 — Multi-Agent Engineering Team
 
-- Added dependency-free PNG evidence decoding/encoding for non-interlaced 8-bit grayscale/RGB/RGBA images.
-- Added deterministic image comparison with changed-pixel ratio, mean delta, RMS delta, max channel delta, and optional comparison regions.
-- Added visual checkpoint capture through the same host/container execution-provider boundary used by build/test verification.
-- Added `dimensions`, `pixel_diff`, `pixel_probe`, and `region_mean` assertions.
-- Added frozen visual-baseline hashing before implementation begins.
-- Added policy protection preventing implementation/repair actions from modifying configured visual baselines.
-- Added baseline-integrity verification immediately before pixel comparison.
-- Visual assertion failures now participate in the existing bounded repair/reverify loop.
-- Added `.forgepilot/visual/<task-id>/` evidence copies and sandbox export of visual evidence back to the same host evidence path.
-- Added optional local Ollama multimodal verification through the `vision` assertion.
-- Vision assertions fail closed when no provider is configured or the provider errors.
-- Added `--vision-model` and `--vision-url` CLI overrides.
-- Added `compare-images` CLI command for direct baseline comparisons.
-- Added a visual-capture-specific allowlist including Chromium/Chrome without exposing browser executables to normal agent commands.
-- Added `docs/VISUAL_VERIFICATION.md` and a runnable `examples/visual-project` failure→repair demo.
-- Expanded automated suite from 33 to 43 tests while preserving all prior tests.
+### Added
+- Separated Planner, Implementer, Debugger, Reviewer, and Verifier roles.
+- `AgentTeam` coordinator with structured handoff audit trail.
+- Read-only role-policy enforcement for Planner, Reviewer, and Verifier.
+- Bounded Reviewer → Implementer change-request rounds.
+- Independent Verifier gate that can feed evidence into the existing bounded Debugger loop.
+- Role-specific Ollama model selection through `agentTeam.models` and CLI overrides.
+- Multi-agent evidence in JSON/Markdown reports: role models, handoffs, review verdicts, verifier audits, and policy violations.
+- `--agents`, `--no-agents`, and `--max-review-rounds` CLI controls.
+- `--implementer-model`, `--debugger-model`, `--reviewer-model`, and `--verifier-model` CLI controls.
+- `docs/MULTI_AGENT.md` and a deterministic multi-agent reviewer/revision demo.
 
-### Scope note
+### Changed
+- Ollama tasks use multi-agent mode by default; scripted tasks remain opt-in for backward compatibility.
+- Planner in multi-agent mode returns read-only strategy before a separate Implementer produces mutations.
+- Debugging uses the dedicated Debugger role while preserving the v0.2 bounded repair budget.
+- Final deterministic/visual verification is followed by a read-only Verifier audit when multi-agent mode is enabled.
+- Checkpoint schema version advanced to 6 to retain multi-agent evidence.
 
-v0.6 verifies rendered PNG states and command-driven screenshot evidence. Full mouse/keyboard computer-use automation remains a later milestone; this release does not claim that screenshot comparison alone proves arbitrary interactive GUI behavior.
+### Safety
+- Reviewer/Verifier mutation payloads fail closed and are never executed.
+- Deterministic test/build/Git/visual failures cannot be overridden by an approving model Verifier.
+- Handoff logs store bounded summaries, not repository source excerpts.
+- Existing protected RED tests, visual baselines, executable allowlists, sandbox limits, and PASS-only promotion remain enforced.

@@ -1,4 +1,4 @@
-# ForgePilot v0.6 Architecture
+# ForgePilot v0.7 Architecture
 
 ```text
 Task / Goal
@@ -6,8 +6,13 @@ Task / Goal
     v
 Repository Intelligence
     |
-Planner
+    v
+Planner [read-only]
     |
+    v
+Implementer [mutation proposals]
+    |
+    v
 Test-first Controller (optional)
     |
     v
@@ -18,62 +23,81 @@ Host  Disposable Sandbox
        |-- network policy
        |-- CPU / RAM / PID limits
        v
-Guarded Executor / Test Gates / Repair Retries
+Guarded Executor / Test Gates
     |
     v
-Visual Verification (optional)
-    |-- command-driven PNG capture
-    |-- evidence copy
-    |-- frozen-baseline pixel diff
-    |-- deterministic pixel/region assertions
-    |-- optional local vision provider
-    v
-Independent Verifier
+Reviewer [read-only]
+   / \
+approve  request changes
+  |            |
+  |            v
+  |      Implementer revision
+  |            |
+  +------------+
     |
     v
-PASS? ---- no ----> structured failure evidence → bounded repair
-  |
- yes
-  v
-Promote manifest delta (sandbox mode)
-  |
-  v
-Evidence Report + artifact / screenshot copy-out
+Visual + Deterministic Verification
+    |
+    v
+Verifier [read-only]
+   / \
+approve  reject
+  |       |
+  |       v
+  |    Debugger [mutation proposals]
+  |       |
+  +-------+--> bounded re-verification
+    |
+    v
+PASS / sandbox promotion / evidence report
 ```
 
 ## Trust boundaries
 
 ### Planner
-May propose structured edits and checks. It cannot execute code or declare success.
+Read-only. Produces strategy, risks, and acceptance criteria. It cannot execute code or return mutation actions in multi-agent mode.
 
-### Workspace controller
-In sandbox mode it copies the repository to a temporary workspace before execution. The host repository remains unchanged until PASS.
+### Implementer
+May propose structured mutations. It never writes files directly; all actions pass through the guarded executor and existing workspace/sandbox policies.
+
+### Debugger
+Receives concrete failure evidence and may propose the smallest repair. Repair count remains bounded by `maxRepairs`.
+
+### Reviewer
+Read-only. It may approve or request changes with structured findings. Any attempt to return actions/commands/patches is a policy violation and fails closed. Reviewer change requests are routed back to the Implementer with a separate bounded review-round budget.
+
+### Verifier
+Read-only. It receives a bounded summary of deterministic checks and Git-diff evidence. It cannot make a failed deterministic gate pass. When configured as a required gate, rejection becomes a failed `agent_verifier` check that can enter the Debugger loop.
+
+### Orchestrator
+Owns sequencing, budgets, protected test/baseline hashes, role-policy enforcement, evidence persistence, and PASS/FAIL. Agents do not directly call one another.
 
 ### Execution provider
-All repository code execution goes through one provider. Visual capture commands use the same provider, preventing a sandboxed build from being followed by accidental host-side screenshot execution.
+All repository code execution goes through one provider. Sandbox mode keeps repository code inside the disposable copy until PASS-only promotion.
 
 ### Test-first controller
 Owns AUTHOR → RED → IMPLEMENT → GREEN sequencing and protects RED-proven tests from later modification.
 
 ### Visual controller
-Fingerprints configured baseline PNGs before implementation. Baseline paths join the protected-evidence set and cannot be changed by implementation/repair actions. Captured screenshots are copied to ForgePilot-owned evidence paths before evaluation.
+Fingerprints configured PNG baselines before implementation and performs deterministic dimensions/pixel/region checks plus optional local vision assertions.
 
-### Deterministic visual verifier
-Decodes PNG pixels itself and computes reproducible metrics. It does not depend on the planner's description of the UI.
+## Structured handoffs
 
-### Vision provider
-Optional and independent from the planner. It receives the captured screenshot plus explicit visible criteria and must return a structured verdict. Provider failure or insufficient confidence fails the assertion.
+Persistent handoff records contain summaries rather than source excerpts:
 
-### Verifier
-Reruns executable checks from actual state and combines code/test evidence with visual evidence. Git/file-policy inspection remains controlled by ForgePilot.
+```json
+{
+  "from": "reviewer",
+  "to": "implementer",
+  "kind": "review_verdict",
+  "summary": {
+    "round": 1,
+    "verdict": "request_changes",
+    "findings": [
+      { "severity": "error", "path": "src/app.js", "message": "..." }
+    ]
+  }
+}
+```
 
-### Promotion controller
-After PASS, compares pre-run and post-run manifests and copies only added/modified/deleted workspace files to the original workspace. `.forgepilot/` and `node_modules/` remain excluded. Visual evidence is exported separately.
-
-## Visual failure repair
-
-Visual checks are appended to normal verification. If they fail, the same bounded repair loop receives the failing check payload, including deterministic diff metrics or vision-model observations. After a source repair, ForgePilot recaptures the screenshot and independently reruns the visual assertions.
-
-## Why v0.6 is not full computer use
-
-v0.6 can execute a trusted screenshot-generation command (including installed Chromium/Chrome) and verify the resulting image. It does not yet own persistent GUI processes, mouse coordinates, keyboard input, accessibility trees, or recorded interaction traces. Those capabilities remain separate so visual verification can be trustworthy before broader computer control is introduced.
+This keeps the audit trail useful without turning reports into copies of private source code.
