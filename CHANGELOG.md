@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.0 — Workspace Intelligence + Reversible Change Safety
+
+### Added
+- Repository change preflight with low/medium/high risk classification and explicit reasons.
+- Preflight evidence for likely touch points, test context, repository size, and pre-existing dirty Git paths without returning source contents.
+- Automatic pre-job workspace checkpoints for dashboard engineering jobs.
+- Exact post-run change sets with added/modified/deleted counts and SHA-256 before/after evidence.
+- Conflict-safe rollback that restores the exact pre-job state, including pre-existing user edits.
+- Rollback dry-run mode and dashboard confirmation flow.
+- `forgepilot preflight` and `forgepilot rollback` advanced CLI commands.
+- Dashboard rollback API protected by the existing per-launch control token.
+- Dashboard risk badges and post-run change summaries.
+- 10 new workspace-safety regression tests.
+
+### Safety
+- Rollback never uses `git reset --hard`.
+- A rollback path is restored only when its current hash still matches ForgePilot's recorded post-run hash; newer human edits cause a conflict and are left untouched.
+- Checkpoints exclude `.forgepilot`, dependency/build-output directories, and ignored files through the existing repository scanner.
+- Dashboard jobs remain in a `finalizing` phase until signed-report/provenance and checkpoint finalization are complete; PASS is not exposed early.
+- Large/truncated checkpoints fail closed rather than claiming reversibility without complete evidence.
+
+### Validation
+- Full regression suite: 109/109 passing; existing v0.1-v0.12 behavior remains covered.
+- New tests cover add/modify/delete restoration, pre-existing dirty-state restoration, post-run edit conflicts, dry-run rollback, high-risk preflight, dirty-path privacy, dashboard change summaries, and token-protected rollback API behavior.
+
 ## 0.12.0 — Persistent Project Workspaces + Reusable Recipes + Resumable Queue
 
 ### Added

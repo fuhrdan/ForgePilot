@@ -1,10 +1,10 @@
-# ForgePilot v0.12 Validation
+# ForgePilot v0.13 Validation
 
-Release acceptance requires all earlier v0.1-v0.11 regression tests plus v0.12 project/recipe/queue checks.
+Release acceptance requires all earlier v0.1-v0.11 regression tests plus v0.12 project/recipe/queue checks plus v0.13 workspace-safety checks.
 
 ## Automated suite
 
-The v0.12 suite covers:
+The v0.12/v0.13 suite covers:
 
 - all 89 prior guarded execution, repair, repository, test-first, sandbox, visual, multi-agent, computer-control, hardening, one-click, and control-center behaviors;
 - saved project registry persistence and path validation;
@@ -21,15 +21,17 @@ The v0.12 suite covers:
 
 A release candidate must also pass:
 
-1. `npm test` (99 tests).
+1. `npm test` (109 tests).
 2. syntax check every JavaScript file with `node --check`.
-3. `node src/cli.js --version` returns `0.12.0`.
-4. dashboard HTTP acceptance creates a saved project and uses a built-in recipe.
-5. two real ForgePilot subprocess jobs demonstrate one-running/one-queued FIFO behavior.
-6. both jobs finish PASS with signed JSON provenance.
-7. queue retry creates a new job with an auditable `retryOf` link.
-8. final ZIP extraction reruns the automated suite and acceptance path.
+3. `node src/cli.js --version` returns `0.13.0`.
+4. dashboard HTTP acceptance performs repository preflight and starts a real ForgePilot subprocess against a local Ollama-compatible endpoint.
+5. the job finishes PASS with signed JSON provenance and an exact added/modified/deleted change set.
+6. rollback dry-run reports the reversible operations without modifying the workspace.
+7. rollback restores the exact pre-job state, including removal of files created by ForgePilot.
+8. final ZIP extraction reruns the automated suite and the same signed checkpoint/rollback acceptance path.
 
 ## Platform limitation
 
 The release build host is Linux. Windows one-click scripts remain statically/syntax validated here, while the real Desktop shortcut, `winget` bootstrap, portable Windows Node fallback, and native Windows UI Automation require Windows 10/11 acceptance on the target PC.
+
+- v0.13 additionally validates reversible add/modify/delete checkpoints, preservation of pre-existing dirty state, post-run conflict detection, dry-run rollback, risk preflight, dashboard change summaries, and token-protected rollback.

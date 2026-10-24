@@ -109,7 +109,7 @@ async function walkFiles(workspace, maxFiles) {
 
 export async function scanRepository(workspace, { maxFiles = 2000 } = {}) {
     const fromGit = await gitFiles(workspace);
-    const files = fromGit ?? await walkFiles(workspace, maxFiles);
+    const files = fromGit ?? await walkFiles(workspace, maxFiles + 1);
     return {
         files: files.slice(0, maxFiles),
         truncated: files.length > maxFiles,

@@ -24,8 +24,10 @@ import { signReport, verifyReportProvenance } from "./security/provenance.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
 import { launchForgePilot } from "./product/launcher.js";
+import { buildPreflight } from "./repository/preflight.js";
+import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -40,11 +42,13 @@ function usage() {
 `  forgepilot verify-run <report.json> [--public-key PATH]\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
+`  forgepilot preflight [workspace] --goal TEXT\n` +
+`  forgepilot rollback <workspace> <checkpoint-id> [--dry-run]\n` +
 `  forgepilot run <task.json> [--workspace PATH] [--planner scripted|ollama] [--model MODEL] [--ollama-url URL] [--vision-model MODEL] [--vision-url URL] [--max-repairs N] [--agents|--no-agents] [--max-review-rounds N] [--implementer-model MODEL] [--debugger-model MODEL] [--reviewer-model MODEL] [--verifier-model MODEL] [--resume] [--computer] [--computer-driver cdp|replay|windows-ui] [--computer-endpoint URL] [--computer-target TEXT] [--sandbox] [--sandbox-runtime auto|docker|podman] [--sandbox-image IMAGE] [--sandbox-keep] [--profile NAME] [--approve CATEGORIES] [--approve-all] [--apply]\n` +
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Local control center (v0.12):\n` +
+`Local control center (v0.13):\n` +
 `  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local control center in a browser.
   The dashboard can analyze repositories and start/cancel verified jobs with explicit capability grants.\n` +
 `  Windows release includes INSTALL_FORGEPILOT.cmd and RUN_FORGEPILOT.cmd for double-click install/run.\n\n` +
@@ -75,7 +79,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all", "json", "no-browser"]);
+    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all", "json", "no-browser", "dry-run"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -411,6 +415,36 @@ async function analyzeRepository(workspaceArg, options) {
     for (const file of repository.selectedFiles) console.log(`  - ${file.path} (score ${file.score})`);
 }
 
+async function preflightCommand(workspaceArg, options = {}) {
+    const workspace = await ensureWorkspace(workspaceArg ?? ".");
+    const goal = String(options.goal ?? "").trim();
+    if (!goal) throw new Error("preflight requires --goal TEXT.");
+    const result = await buildPreflight(workspace, { goal, maxContextTokens: Number(options["max-context-tokens"] ?? 4000) });
+    console.log(`ForgePilot v${VERSION} change preflight`);
+    console.log(`Workspace: ${result.workspace}`);
+    console.log(`Risk: ${result.risk.level.toUpperCase()} (${result.risk.points})`);
+    for (const reason of result.risk.reasons) console.log(`  - ${reason}`);
+    console.log(`Likely context/touch points: ${result.likelyTouched.join(", ") || "(none)"}`);
+    console.log(`Existing dirty paths: ${result.dirty.entries.length}`);
+    console.log("Checkpoint: required before dashboard execution");
+}
+
+async function rollbackCommand(workspaceArg, checkpointId, options = {}) {
+    if (!workspaceArg || !checkpointId) throw new Error("rollback requires <workspace> <checkpoint-id>.");
+    const workspace = await ensureWorkspace(workspaceArg);
+    const result = await rollbackWorkspaceCheckpoint(workspace, checkpointId, { dryRun: Boolean(options["dry-run"]) });
+    console.log(`ForgePilot v${VERSION} rollback`);
+    console.log(`Checkpoint: ${checkpointId}`);
+    console.log(`Mode: ${result.dryRun ? "DRY RUN" : "APPLY"}`);
+    console.log(`Restorable files: ${result.restored.length}`);
+    if (result.conflicts.length) {
+        console.log("Conflicts:");
+        for (const item of result.conflicts) console.log(`  - ${item.path}`);
+    }
+    console.log(`Result: ${result.passed ? "PASS" : "BLOCKED"}`);
+    if (!result.passed) process.exitCode = 2;
+}
+
 async function compareImagesCommand(actualArg, baselineArg, options) {
     if (!actualArg || !baselineArg) throw new Error("compare-images requires <actual.png> <baseline.png>.");
     const actual = await decodePng(path.resolve(actualArg));
@@ -548,6 +582,16 @@ async function main() {
     if (command === "analyze") {
         const { options, positionals } = parseOptions(rest);
         return analyzeRepository(positionals[0] ?? ".", options);
+    }
+
+    if (command === "preflight") {
+        const { options, positionals } = parseOptions(rest);
+        return preflightCommand(positionals[0] ?? ".", options);
+    }
+
+    if (command === "rollback") {
+        const { options, positionals } = parseOptions(rest);
+        return rollbackCommand(positionals[0], positionals[1], options);
     }
 
     if (command === "compare-images") {

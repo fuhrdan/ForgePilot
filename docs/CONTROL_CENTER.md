@@ -1,4 +1,4 @@
-# ForgePilot v0.12 Local Control Center
+# ForgePilot v0.13 Local Control Center
 
 The one-click launcher opens a loopback-only browser UI. v0.12 turns the v0.11 job form into a persistent project/recipe/task-queue workspace so normal daily use does not require hand-authored task JSON.
 
@@ -66,3 +66,8 @@ Queue state is persisted. Queued/paused jobs survive a dashboard restart. A job 
 ## Low-resource behavior
 
 The control center inherits the persisted machine-adaptive profile. The queue's default single-job concurrency is an additional v0.12 protection against local LLM memory contention.
+
+
+## v0.13 change safety
+
+Repository analysis now includes a separate risk preflight. Every dashboard job creates a reversible checkpoint before execution, records its exact post-run change set, and can offer conflict-safe rollback. Rollback is blocked if a file no longer matches the exact version ForgePilot produced.

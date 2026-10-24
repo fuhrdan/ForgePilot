@@ -8,6 +8,8 @@ import { createTaskId } from "../core/state.js";
 import { verifyReportProvenance } from "../security/provenance.js";
 import { APPROVAL_CATEGORIES } from "../security/approvals.js";
 import { applyRecipe } from "./recipes.js";
+import { buildPreflight } from "../repository/preflight.js";
+import { createWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, rollbackWorkspaceCheckpoint } from "../repository/checkpoint.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -113,6 +115,14 @@ export class DashboardJobManager {
         await fs.writeFile(this.statePath, JSON.stringify({ version: 1, queuePaused: this.queuePaused, jobs }, null, 2) + "\n", "utf8");
     }
 
+    async preflight({ workspace, goal = "" }) {
+        const resolved = await ensureDirectory(workspace);
+        return buildPreflight(resolved, {
+            goal: cleanText(goal, 12000),
+            maxContextTokens: Math.min(Number(this.machineConfig?.maxContextTokens ?? 4000), 4000)
+        });
+    }
+
     async analyze({ workspace, goal = "" }) {
         const resolved = await ensureDirectory(workspace);
         const repository = await buildRepositoryContext(resolved, {
@@ -166,6 +176,10 @@ export class DashboardJobManager {
             markdownPath: job.markdownPath,
             signed: job.signed,
             retryOf: job.retryOf ?? null,
+            preflight: job.preflight ?? null,
+            checkpoint: job.checkpoint ?? null,
+            changeSet: job.changeSet ?? null,
+            rollback: job.rollback ?? null,
             log: job.log,
             error: job.error ?? null
         };
@@ -199,6 +213,7 @@ export class DashboardJobManager {
         const grants = sanitizeApprovals(approvals, recipe?.approvals ?? ["file_write", "command_exec"]);
         const sandboxEnabled = sandbox === undefined ? Boolean(recipe?.sandbox) : Boolean(sandbox);
         const effectiveGoal = applyRecipe(recipe, cleanGoal);
+        const preflight = await this.preflight({ workspace: resolved, goal: effectiveGoal });
         const id = crypto.randomBytes(8).toString("hex");
         const taskDir = path.join(resolved, ".forgepilot", "ui-tasks");
         await fs.mkdir(taskDir, { recursive: true });
@@ -226,6 +241,7 @@ export class DashboardJobManager {
             id, workspace: resolved, goal: cleanGoal, effectiveGoal, recipeId: recipe?.id ?? null, recipeName: recipe?.name ?? null,
             autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
             completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
+            preflight, checkpoint: null, changeSet: null, rollback: null,
             log: "", child: null, error: null
         };
         this.jobs.set(id, job);
@@ -256,10 +272,24 @@ export class DashboardJobManager {
     async start(job) {
         if (job.status !== "queued") return;
         job.status = "running";
-        job.phase = "starting";
+        job.phase = "checkpointing";
         job.startedAt = new Date().toISOString();
         job.completedAt = null;
         job.error = null;
+        await this.persist();
+        try {
+            const checkpoint = await createWorkspaceCheckpoint(job.workspace, job.id);
+            job.checkpoint = { id: checkpoint.id, createdAt: checkpoint.createdAt, fileCount: checkpoint.fileCount, totalBytes: checkpoint.totalBytes, rollbackAvailable: false };
+        } catch (error) {
+            job.status = "failed";
+            job.phase = "checkpoint_failed";
+            job.error = error.message;
+            job.completedAt = new Date().toISOString();
+            await this.persist();
+            this.drain();
+            return;
+        }
+        job.phase = "starting";
         await this.persist();
         const args = [this.cliPath, "run", job.taskPath, "--workspace", job.workspace, "--planner", "ollama", "--apply"];
         if (job.approvals.length) args.push("--approve", job.approvals.join(","));
@@ -281,13 +311,9 @@ export class DashboardJobManager {
         await new Promise((resolve) => child.on("close", (code) => { job.exitCode = code ?? -1; resolve(); }));
         job.child = null;
         job.completedAt = new Date().toISOString();
-        if (job.phase === "cancelling") {
-            job.status = "cancelled";
-            job.phase = "cancelled";
-        } else {
-            job.status = job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail";
-            job.phase = job.status === "pass" ? "completed" : "failed";
-        }
+        const wasCancelling = job.phase === "cancelling";
+        let finalStatus = wasCancelling ? "cancelled" : (job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail");
+        job.phase = "finalizing";
         if (!job.reportPath) {
             const match = job.log.match(/^JSON:\s*(.+)$/m);
             if (match) job.reportPath = match[1].trim();
@@ -302,6 +328,23 @@ export class DashboardJobManager {
                 job.signed = Boolean(verified.passed);
             } catch { job.signed = false; }
         }
+        try {
+            const checkpoint = await finalizeWorkspaceCheckpoint(job.workspace, job.id);
+            job.changeSet = {
+                changedFiles: checkpoint.changes ?? [],
+                summary: {
+                    added: (checkpoint.changes ?? []).filter((item) => item.status === "added").length,
+                    modified: (checkpoint.changes ?? []).filter((item) => item.status === "modified").length,
+                    deleted: (checkpoint.changes ?? []).filter((item) => item.status === "deleted").length
+                }
+            };
+            if (job.checkpoint) job.checkpoint.rollbackAvailable = (checkpoint.changes ?? []).length > 0;
+        } catch (error) {
+            job.error = job.error ? `${job.error}; checkpoint finalization: ${error.message}` : `Checkpoint finalization: ${error.message}`;
+            if (finalStatus === "pass") finalStatus = "fail";
+        }
+        job.status = finalStatus;
+        job.phase = finalStatus === "pass" ? "completed" : finalStatus === "cancelled" ? "cancelled" : "failed";
         await this.persist();
         this.drain();
     }
@@ -363,6 +406,18 @@ export class DashboardJobManager {
             return true;
         }
         return false;
+    }
+
+    async rollbackJob(id, { dryRun = false } = {}) {
+        const job = this.jobs.get(String(id));
+        if (!job || !job.checkpoint?.id || ["queued", "running", "paused"].includes(job.status)) return null;
+        const result = await rollbackWorkspaceCheckpoint(job.workspace, job.checkpoint.id, { dryRun });
+        if (!dryRun) {
+            job.rollback = result;
+            if (result.passed && job.checkpoint) job.checkpoint.rollbackAvailable = false;
+            await this.persist();
+        }
+        return result;
     }
 
     async report(id) {

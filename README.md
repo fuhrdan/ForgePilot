@@ -1,8 +1,8 @@
-# ForgePilot v0.12.0
+# ForgePilot v0.13.0
 
-**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center.**
+**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center with reversible workspace safety.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.12 control center with saved projects, reusable recipes, and a persistent low-resource-friendly job queue.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.13 control center with saved projects, reusable recipes, a persistent low-resource-friendly job queue, risk preflight, and conflict-safe rollback.
 
 ## Windows: one-click install and run
 
@@ -52,6 +52,25 @@ Saved control-center state is stored under the launcher workspace:
 ```
 
 Built-in recipes cannot be overwritten or deleted. Recipes only add reusable task instructions/defaults; they never bypass approval gates, command allowlists, repository confinement, sandbox rules, agent-role separation, or provenance verification.
+
+
+## v0.13 workspace safety and rollback
+
+Before a dashboard job starts, ForgePilot now performs a **change preflight** and creates a reversible workspace checkpoint. Preflight classifies the task as low/medium/high risk using the goal, repository structure, likely context/touch points, repository size, and any pre-existing dirty Git paths. It does not grant extra permissions.
+
+The checkpoint captures the repository state *as it exists immediately before ForgePilot runs*, including pre-existing user edits. After the run ForgePilot records exact post-run SHA-256 hashes and a change set (`added`, `modified`, `deleted`). The dashboard shows that change summary and offers **Rollback changes**.
+
+Rollback is intentionally conflict-safe: ForgePilot restores a path only when its current hash still matches the exact post-run hash that ForgePilot recorded. If you edit a file after the job finishes, rollback is blocked for that file instead of overwriting your newer work. ForgePilot never implements this feature as `git reset --hard`.
+
+Advanced CLI commands:
+
+```powershell
+forgepilot preflight . --goal "Migrate authentication schema"
+forgepilot rollback . <checkpoint-id> --dry-run
+forgepilot rollback . <checkpoint-id>
+```
+
+Dashboard jobs do not become visible as PASS until report provenance and checkpoint finalization are complete.
 
 ## Requirements / bootstrap behavior
 
@@ -235,7 +254,7 @@ Profiles set sensible defaults for coding model, vision model, context budget, r
 node src/cli.js dashboard . --port 3210
 ```
 
-The dashboard binds to `127.0.0.1`. In v0.12 it adds saved projects, reusable recipes, persistent FIFO queueing, queued pause/resume, cancellation, retry lineage, and restart recovery on top of the v0.11 repository analysis/job controls. The CLI remains available for advanced task JSON, secrets, computer-control, and custom-model workflows.
+The dashboard binds to `127.0.0.1`. In v0.13 it adds change-risk preflight, automatic reversible checkpoints, post-run change summaries, and conflict-safe rollback on top of the v0.12 saved-project/recipe/FIFO queue controls. The CLI remains available for advanced task JSON, secrets, computer-control, and custom-model workflows.
 
 ## Native Windows UI Automation
 
@@ -267,6 +286,7 @@ This copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, writes a `forgepilot.cmd`
 ## Existing guarantees retained
 
 - **v0.12:** saved projects, reusable recipes, and persistent low-resource-friendly task queue.
+- **v0.13:** risk preflight, reversible workspace checkpoints, exact change summaries, and conflict-safe rollback.
 - **v0.11:** browser repository analysis and natural-language job control.
 - **v0.10:** one-click Windows install/run and machine-adaptive low-resource defaults.
 - **v0.9:** secrets, explicit approvals, signed provenance, recovery journals, profiles, and native Windows UI Automation.
