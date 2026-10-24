@@ -21,7 +21,7 @@ A release candidate must also pass:
 
 1. `npm test`.
 2. syntax check every JavaScript file with `node --check`.
-3. `node src/cli.js --version` returns `0.9.0`.
+3. `node src/cli.js --version` returns `0.10.0`.
 4. `examples/hardened-task.json` fails without required approvals and uses zero repair attempts.
 5. the same task passes with `--approve file_write,command_exec`.
 6. `verify-run` validates both signature/hash and the workspace trusted public key.

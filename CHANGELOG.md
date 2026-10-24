@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.10.0 — One-Click Windows + Adaptive Low-Resource Runtime
+
+### Added
+- Root-level `INSTALL_FORGEPILOT.cmd` for double-click installation.
+- Root-level `RUN_FORGEPILOT.cmd` and a Desktop ForgePilot shortcut for double-click launch.
+- Automatic Windows prerequisite bootstrap through `winget` for Node.js 22+, Git, and optional Ollama, plus a portable Node.js fallback when `winget` is unavailable.
+- `forgepilot setup` system inspection and persisted machine configuration.
+- `forgepilot launch` loopback-only browser dashboard startup.
+- RAM, available-RAM, CPU, GPU/VRAM, free-disk, and developer-tool inspection.
+- Adaptive minimal/low-resource/balanced/high-quality machine plans.
+- 1.5B and 3B conservative coding-model choices for small systems.
+- Process-local Ollama concurrency/loaded-model/keep-alive limits for one-click runs.
+- Automatic Documents\ForgePilot Workspace creation.
+- Desktop shortcut creation and preserved workspace on uninstall.
+- Launcher dashboard cards showing the selected machine tier/model/resource plan.
+
+### Changed
+- Normal task runs now reuse the persisted machine profile when no task/CLI override is supplied.
+- Low-memory plans disable the vision model and multi-agent team by default.
+- The automatic first model download is capped at 7B even on high-resource systems.
+- The v0.9 installer remains available as a wrapper around the new one-click installer.
+
+### Safety / reliability
+- Dashboard remains loopback-only.
+- Automatic AI/model installation is best-effort and does not prevent deterministic ForgePilot use when optional downloads fail.
+- Low-resource tuning is process-local; the launcher does not permanently rewrite global Ollama concurrency settings.
+- Explicit task/CLI choices still override machine defaults.
+- Windows native installer/shortcut execution is not executable-tested on this Linux build host; PowerShell scripts are kept Windows PowerShell 5.1 compatible and the Node-side contracts are covered by automated tests.
+
 ## 0.9.0 — Product Hardening
 
 ### Added

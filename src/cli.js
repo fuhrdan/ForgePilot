@@ -22,14 +22,18 @@ import { resolveProfile, detectHardware, recommendProfile } from "./product/prof
 import { RecoveryJournal, listRecoveryJournals } from "./product/recovery.js";
 import { signReport, verifyReportProvenance } from "./security/provenance.js";
 import { createDashboardServer } from "./dashboard/server.js";
+import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
+import { launchForgePilot } from "./product/launcher.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
 `Usage:\n` +
 `  forgepilot init <workspace>\n` +
 `  forgepilot doctor\n` +
+`  forgepilot setup [--json]\n` +
+`  forgepilot launch [workspace] [--port N] [--no-browser]\n` +
 `  forgepilot profile [auto|low-resource|balanced|high-quality]\n` +
 `  forgepilot recover [workspace]\n` +
 `  forgepilot dashboard [workspace] [--port N]\n` +
@@ -40,7 +44,10 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Product hardening (v0.9):\n` +
+`One-click desktop flow (v0.10):\n` +
+`  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local dashboard in a browser.\n` +
+`  Windows release includes INSTALL_FORGEPILOT.cmd and RUN_FORGEPILOT.cmd for double-click install/run.\n\n` +
+`Product hardening (v0.9+):\n` +
 `  Optional permission categories, environment-backed secrets, recovery journals, signed provenance, hardware/model profiles, local dashboard, and native Windows UI Automation.\n` +
 `  --approve accepts comma-separated required categories; --approve-all grants all task-required categories.\n\n` +
 `Computer / IDE control (v0.8+):\n` +
@@ -67,7 +74,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all"]);
+    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all", "json", "no-browser"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -155,13 +162,20 @@ function repositoryReportSummary(repository) {
 async function runTask(taskFile, options) {
     const taskPath = path.resolve(taskFile);
     const rawTask = JSON.parse(await fs.readFile(taskPath, "utf8"));
-    const selectedProfileName = options.profile ?? rawTask.profile ?? null;
+    const machineConfig = await loadMachineConfig().catch(() => null);
+    const explicitProfile = options.profile ?? rawTask.profile ?? null;
+    const selectedProfileName = explicitProfile ?? process.env.FORGEPILOT_PROFILE ?? machineConfig?.profile ?? null;
     const profile = selectedProfileName ? resolveProfile(selectedProfileName) : null;
-    const task = profile ? { ...rawTask, maxContextTokens: rawTask.maxContextTokens ?? profile.maxContextTokens } : rawTask;
-    const effectiveOptions = profile ? {
+    const useMachineDefaults = !explicitProfile && machineConfig;
+    const defaultContext = useMachineDefaults?.maxContextTokens ?? profile?.maxContextTokens;
+    const task = defaultContext ? { ...rawTask, maxContextTokens: rawTask.maxContextTokens ?? defaultContext } : rawTask;
+    const configuredVisionModel = useMachineDefaults && Object.prototype.hasOwnProperty.call(useMachineDefaults, "visionModel")
+        ? useMachineDefaults.visionModel
+        : profile?.visionModel;
+    const effectiveOptions = (profile || useMachineDefaults) ? {
         ...options,
-        model: options.model ?? task.model ?? profile.model,
-        "vision-model": options["vision-model"] ?? task.visual?.provider?.model ?? profile.visionModel
+        model: options.model ?? task.model ?? process.env.FORGEPILOT_MODEL ?? useMachineDefaults?.model ?? profile?.model,
+        "vision-model": options["vision-model"] ?? task.visual?.provider?.model ?? configuredVisionModel
     } : options;
     const originalWorkspace = await ensureWorkspace(options.workspace ?? task.workspace ?? path.dirname(taskPath));
     await initializeWorkspace(originalWorkspace);
@@ -173,8 +187,8 @@ async function runTask(taskFile, options) {
     const rawAgentTeam = task.agentTeam === true ? {} : (task.agentTeam && typeof task.agentTeam === "object" ? task.agentTeam : {});
     const agentsEnabled = options["no-agents"]
         ? false
-        : Boolean(options.agents || rawAgentTeam.enabled === true || (plannerName === "ollama" && rawAgentTeam.enabled !== false));
-    const maxReviewRounds = Math.max(0, Number(options["max-review-rounds"] ?? rawAgentTeam.maxReviewRounds ?? profile?.maxReviewRounds ?? 2));
+        : Boolean(options.agents || rawAgentTeam.enabled === true || (plannerName === "ollama" && rawAgentTeam.enabled !== false && useMachineDefaults?.agentTeamEnabled !== false));
+    const maxReviewRounds = Math.max(0, Number(options["max-review-rounds"] ?? rawAgentTeam.maxReviewRounds ?? useMachineDefaults?.maxReviewRounds ?? profile?.maxReviewRounds ?? 2));
     if (!Number.isFinite(maxReviewRounds)) throw new Error("--max-review-rounds must be a number.");
     const roleAdapters = {};
     if (agentsEnabled && plannerName === "ollama") {
@@ -198,7 +212,7 @@ async function runTask(taskFile, options) {
     const visionProvider = buildVisionProvider(task, effectiveOptions);
     const taskId = createTaskId(taskPath, task);
     const recovery = new RecoveryJournal(originalWorkspace, taskId);
-    const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? profile?.maxRepairs ?? 2));
+    const maxRepairs = Math.max(0, Number(options["max-repairs"] ?? task.maxRepairs ?? useMachineDefaults?.maxRepairs ?? profile?.maxRepairs ?? 2));
     if (!Number.isFinite(maxRepairs)) throw new Error("--max-repairs must be a number.");
 
     const rawSandbox = task.sandbox === true ? {} : (task.sandbox && typeof task.sandbox === "object" ? task.sandbox : {});
@@ -259,7 +273,7 @@ async function runTask(taskFile, options) {
     console.log(`Goal: ${task.goal ?? "(no goal supplied)"}`);
     console.log(`Workspace: ${originalWorkspace}`);
     console.log(`Planner: ${plannerName}`);
-    if (profile) console.log(`Profile: ${profile.name} (${profile.hardware.memoryGiB} GiB RAM / ${profile.hardware.logicalCpus} CPUs)`);
+    if (profile) console.log(`Profile: ${profile.name} (${profile.hardware.memoryGiB} GiB RAM / ${profile.hardware.logicalCpus} CPUs)${useMachineDefaults?.tier ? ` / machine tier ${useMachineDefaults.tier}` : ""}`);
     if (secretStore.summary().length) console.log(`Secrets: ${secretStore.summary().length} environment-backed reference(s)`);
     if (approvalManager.snapshot().required.length) console.log(`Required approvals: ${approvalManager.snapshot().required.join(", ")}`);
     console.log(`Agent team: ${agentsEnabled ? `ON (review rounds ${maxReviewRounds}, verifier gate ${agentTeam.requireVerifierApproval ? "required" : "advisory"})` : "OFF"}`);
@@ -334,7 +348,7 @@ async function runTask(taskFile, options) {
             visionProvider: visionProvider?.describe?.() ?? null,
             multiAgent: outcome.multiAgent ?? agentTeam.snapshot(),
             computer: computerInfo,
-            profile: profile ? { name: profile.name, requested: profile.requested, hardware: profile.hardware, maxContextTokens: profile.maxContextTokens, maxRepairs: profile.maxRepairs, maxReviewRounds: profile.maxReviewRounds } : null,
+            profile: profile ? { name: profile.name, requested: profile.requested, hardware: useMachineDefaults?.hardware ?? profile.hardware, tier: useMachineDefaults?.tier ?? null, model: effectiveOptions.model ?? profile.model, maxContextTokens: task.maxContextTokens ?? profile.maxContextTokens, maxRepairs, maxReviewRounds } : null,
             security: { secrets: secretStore.summary(), approvals: approvalManager.snapshot() },
             sandbox: sandboxInfo
         };
@@ -415,10 +429,58 @@ async function compareImagesCommand(actualArg, baselineArg, options) {
     if (!passed) process.exitCode = 2;
 }
 
+async function setupCommand(options = {}) {
+    const hardware = await inspectSystem();
+    const plan = recommendMachinePlan(hardware);
+    const config = { version: VERSION, configuredAt: new Date().toISOString(), ...plan };
+    const configPath = await saveMachineConfig(config);
+    const envPath = path.join(path.dirname(configPath), "launcher-env.cmd");
+    await writeLauncherEnvironment(config, envPath);
+    if (options.json) {
+        console.log(JSON.stringify({ configPath, envPath, ...config }, null, 2));
+        return;
+    }
+    console.log(`ForgePilot v${VERSION} automatic setup`);
+    console.log(`Machine tier: ${config.tier}`);
+    console.log(`RAM: ${hardware.memoryGiB} GiB total / ${hardware.availableMemoryGiB} GiB currently available`);
+    console.log(`CPU: ${hardware.logicalCpus} logical CPUs${hardware.cpuModels?.[0] ? ` / ${hardware.cpuModels[0]}` : ""}`);
+    if (hardware.gpus?.length) console.log(`GPU: ${hardware.gpus.map((g) => `${g.name}${g.vramGiB ? ` (${g.vramGiB} GiB)` : ""}`).join(", ")}`);
+    if (hardware.disk?.freeGiB != null) console.log(`Free disk: ${hardware.disk.freeGiB} GiB`);
+    console.log(`Profile: ${config.profile}`);
+    console.log(`Coding model: ${config.model}`);
+    console.log(`Bootstrap model: ${config.bootstrapModel}`);
+    console.log(`Vision model: ${config.visionModel ?? "disabled to conserve memory"}`);
+    console.log(`Context: ${config.maxContextTokens}; repairs: ${config.maxRepairs}; review rounds: ${config.maxReviewRounds}; agent team: ${config.agentTeamEnabled ? "ON" : "OFF"}`);
+    console.log(`Config: ${configPath}`);
+    for (const note of config.notes ?? []) console.log(`NOTE: ${note}`);
+}
+
+async function launchCommand(workspaceArg, options = {}) {
+    const port = Number(options.port ?? 3210);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
+    const launched = await launchForgePilot({ workspace: workspaceArg, port, openBrowser: !options["no-browser"] });
+    console.log(`ForgePilot v${VERSION} launcher`);
+    console.log(`Workspace: ${launched.workspace}`);
+    if (launched.machineConfig) console.log(`Machine tier: ${launched.machineConfig.tier}; model: ${launched.machineConfig.model}`);
+    console.log(`Open: ${launched.url}`);
+    console.log("Leave this window open while using ForgePilot. Press Ctrl+C to stop it.");
+}
+
 async function profileCommand(name = "auto") {
+    if (name === "auto") {
+        const hardware = await inspectSystem();
+        const plan = recommendMachinePlan(hardware);
+        console.log(`ForgePilot v${VERSION} profile`);
+        console.log(`Selected: ${plan.profile} (auto / ${plan.tier})`);
+        console.log(`Hardware: ${hardware.memoryGiB} GiB RAM (${hardware.availableMemoryGiB} GiB available), ${hardware.logicalCpus} logical CPUs, ${hardware.platform}/${hardware.arch}`);
+        console.log(`Coding model: ${plan.model}`);
+        console.log(`Vision model: ${plan.visionModel ?? "disabled"}`);
+        console.log(`Context: ${plan.maxContextTokens}; repairs: ${plan.maxRepairs}; review rounds: ${plan.maxReviewRounds}; agent team: ${plan.agentTeamEnabled ? "ON" : "OFF"}`);
+        return;
+    }
     const profile = resolveProfile(name);
     console.log(`ForgePilot v${VERSION} profile`);
-    console.log(`Selected: ${profile.name}${name === "auto" ? " (auto)" : ""}`);
+    console.log(`Selected: ${profile.name}`);
     console.log(`Recommended: ${profile.recommended}`);
     console.log(`Hardware: ${profile.hardware.memoryGiB} GiB RAM, ${profile.hardware.logicalCpus} logical CPUs, ${profile.hardware.platform}/${profile.hardware.arch}`);
     console.log(`Coding model: ${profile.model}`);
@@ -462,6 +524,8 @@ async function main() {
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
     if (["version", "--version", "-v"].includes(command)) return console.log(VERSION);
     if (command === "doctor") return doctor();
+    if (command === "setup") { const { options } = parseOptions(rest); return setupCommand(options); }
+    if (command === "launch") { const { options, positionals } = parseOptions(rest); return launchCommand(positionals[0], options); }
     if (command === "profile") return profileCommand(rest[0] ?? "auto");
     if (command === "recover") return recoverCommand(rest[0] ?? ".");
 

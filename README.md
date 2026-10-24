@@ -1,28 +1,47 @@
-# ForgePilot v0.9.0
+# ForgePilot v0.10.0
 
-**A local-first verified software-engineering agent, now hardened into a Windows-friendly product candidate with approvals, secret references, crash recovery, signed provenance, hardware profiles, a local dashboard, and native Windows UI Automation.**
+**A local-first verified software-engineering agent with a one-click Windows install/run path and automatic low-resource tuning.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, and v0.9 product hardening.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, and v0.10 automatic system tuning.
 
-## Requirements
+## Windows: one-click install and run
 
-- Node.js 22+
-- Git recommended
-- Windows 10/11 for the native `windows-ui` computer driver
-- Docker/Podman optional for `--sandbox`
-- Ollama optional for local AI roles and multimodal visual checks
-- Chromium/Chrome or another CDP-enabled Electron application optional for CDP computer control
+1. Extract the release ZIP.
+2. Double-click **`INSTALL_FORGEPILOT.cmd`** once.
+3. When installation finishes, double-click the new **ForgePilot** shortcut on the Desktop.
 
-There are no npm runtime dependencies.
+The installer copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, creates `Documents\ForgePilot Workspace`, inspects RAM/available RAM, CPU count, GPU/VRAM, free disk, and installed developer tools, then writes a persistent machine profile. It attempts to bootstrap Node.js 22+, Git, and Ollama through `winget` when needed; Node also has a portable nodejs.org ZIP fallback when `winget` is unavailable. Ollama/model setup is best-effort: ForgePilot remains installed if an optional AI download cannot complete.
 
-## Quick start
+The one-click launcher applies low-resource-safe Ollama limits only to the ForgePilot process, starts Ollama when available, starts the loopback-only dashboard on a free local port, and opens it in the default browser. Close the launcher window to stop the dashboard.
+
+Low-resource examples:
+
+- Very small machine: 1.5B coding model, ~1.5K context, no vision model, multi-agent mode off.
+- Modest machine: 3B coding model, ~2.3K context, no vision model, one loaded Ollama model.
+- Balanced machine: 7B coding model by default; 14B only when RAM/VRAM is sufficient.
+
+The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
+
+## Requirements / bootstrap behavior
+
+- Windows 10/11 recommended for the one-click path and native `windows-ui` driver.
+- `winget` is preferred when Node.js 22+, Git, or optional Ollama need to be installed automatically. Node.js also has a per-user portable ZIP fallback.
+- Docker/Podman remains optional for `--sandbox`.
+- Chromium/Chrome or another CDP-enabled Electron application remains optional for CDP computer control.
+- There are no npm runtime dependencies.
+
+If automatic prerequisite installation is unavailable, the installer fails with the missing prerequisite instead of silently continuing with a broken runtime.
+
+## CLI quick start
 
 ```powershell
-npm test
+node src/cli.js setup
 node src/cli.js doctor
 node src/cli.js profile auto
-node src/cli.js analyze . --goal "fix the settings UI"
+node src/cli.js launch --port 0
 ```
+
+`setup` persists the automatic machine plan. Normal `run` commands reuse that plan unless a task or CLI flag explicitly overrides it.
 
 Run the hardened approval demo:
 
