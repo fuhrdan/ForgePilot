@@ -23,7 +23,7 @@ A release candidate must also pass:
 
 1. `npm test` (109 tests).
 2. syntax check every JavaScript file with `node --check`.
-3. `node src/cli.js --version` returns `0.13.0`.
+3. `node src/cli.js --version` returns `0.14.0`.
 4. dashboard HTTP acceptance performs repository preflight and starts a real ForgePilot subprocess against a local Ollama-compatible endpoint.
 5. the job finishes PASS with signed JSON provenance and an exact added/modified/deleted change set.
 6. rollback dry-run reports the reversible operations without modifying the workspace.

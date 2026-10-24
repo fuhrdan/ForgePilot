@@ -30,25 +30,43 @@ function bounded(value, max = 16000) {
 }
 
 export class OllamaPlanner {
-    constructor({ model, baseUrl = "http://127.0.0.1:11434" }) {
+    constructor({ model, baseUrl = "http://127.0.0.1:11434", fallbackModels = [] }) {
         if (!model) throw new Error("Ollama planner requires a model name.");
         this.model = model;
+        this.fallbackModels = [...new Set((fallbackModels ?? []).map(String).filter(Boolean))].filter((item) => item !== model);
         this.baseUrl = baseUrl.replace(/\/$/, "");
+        this.lastModelUsed = model;
+        this.fallbackHistory = [];
     }
 
     async generate(prompt, validator = (value) => value) {
-        const response = await fetch(`${this.baseUrl}/api/generate`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ model: this.model, stream: false, format: "json", prompt })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Ollama returned HTTP ${response.status}: ${await response.text()}`);
+        const candidates = [this.model, ...this.fallbackModels];
+        let lastError;
+        for (let index = 0; index < candidates.length; index++) {
+            const model = candidates[index];
+            try {
+                const response = await fetch(`${this.baseUrl}/api/generate`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ model, stream: false, format: "json", prompt })
+                });
+                if (!response.ok) {
+                    const detail = await response.text();
+                    const error = new Error(`Ollama returned HTTP ${response.status} for ${model}: ${detail}`);
+                    error.status = response.status;
+                    throw error;
+                }
+                const body = await response.json();
+                this.lastModelUsed = model;
+                if (model !== this.model) this.fallbackHistory.push({ from: this.model, to: model, at: new Date().toISOString() });
+                return validator(extractJson(body.response ?? ""));
+            } catch (error) {
+                lastError = error;
+                const retryableStatus = error?.status == null || [404, 408, 429, 500, 502, 503, 507].includes(Number(error.status));
+                if (!retryableStatus || index === candidates.length - 1) throw error;
+            }
         }
-
-        const body = await response.json();
-        return validator(extractJson(body.response ?? ""));
+        throw lastError ?? new Error("Ollama generation failed.");
     }
 
     async plan(task, context) {

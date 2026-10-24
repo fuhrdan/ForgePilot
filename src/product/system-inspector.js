@@ -153,6 +153,8 @@ export function recommendMachinePlan(hardware) {
         }
     };
     const plan = { tier, ...plans[tier] };
+    plan.modelFallbacks = tier === "minimal" ? [] : tier === "low-resource" ? ["qwen2.5-coder:1.5b"] : tier === "balanced" ? ["qwen2.5-coder:3b", "qwen2.5-coder:1.5b"] : ["qwen2.5-coder:14b", "qwen2.5-coder:7b", "qwen2.5-coder:3b", "qwen2.5-coder:1.5b"];
+    plan.adaptiveRuntime = true;
     const notes = [];
     if (ram < 8) notes.push("Very low RAM detected; close browsers/games before AI runs and expect slower local inference.");
     else if (availableRam < 6) notes.push("Current free RAM is low; ForgePilot temporarily selected a smaller runtime plan for this launch.");

@@ -10,6 +10,7 @@ import { APPROVAL_CATEGORIES } from "../security/approvals.js";
 import { applyRecipe } from "./recipes.js";
 import { buildPreflight } from "../repository/preflight.js";
 import { createWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, rollbackWorkspaceCheckpoint } from "../repository/checkpoint.js";
+import { buildRuntimeHealth } from "../product/runtime-health.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -57,7 +58,7 @@ function persistentJob(job) {
 }
 
 export class DashboardJobManager {
-    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null, rootWorkspace = null, maxConcurrentJobs = 1, recipeStore = null } = {}) {
+    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null, rootWorkspace = null, maxConcurrentJobs = 1, recipeStore = null, runtimeHealthBuilder = buildRuntimeHealth } = {}) {
         this.machineConfig = machineConfig;
         this.nodePath = nodePath;
         this.cliPath = cliPath;
@@ -71,6 +72,7 @@ export class DashboardJobManager {
         this.queuePaused = false;
         this.loaded = false;
         this.recipeStore = recipeStore;
+        this.runtimeHealthBuilder = runtimeHealthBuilder;
     }
 
     configureRoot(rootWorkspace) {
@@ -180,6 +182,7 @@ export class DashboardJobManager {
             checkpoint: job.checkpoint ?? null,
             changeSet: job.changeSet ?? null,
             rollback: job.rollback ?? null,
+            runtime: job.runtime ?? null,
             log: job.log,
             error: job.error ?? null
         };
@@ -223,6 +226,7 @@ export class DashboardJobManager {
             goal: effectiveGoal,
             planner: "ollama",
             model: machine.model ?? "qwen2.5-coder:7b",
+            modelFallbacks: machine.modelFallbacks ?? [],
             ...(this.ollamaUrl ? { ollamaUrl: this.ollamaUrl } : {}),
             maxContextTokens: Number(machine.maxContextTokens ?? 4000),
             maxRepairs: mode.maxRepairs ?? Number(machine.maxRepairs ?? 2),
@@ -241,7 +245,7 @@ export class DashboardJobManager {
             id, workspace: resolved, goal: cleanGoal, effectiveGoal, recipeId: recipe?.id ?? null, recipeName: recipe?.name ?? null,
             autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
             completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
-            preflight, checkpoint: null, changeSet: null, rollback: null,
+            preflight, checkpoint: null, changeSet: null, rollback: null, runtime: null,
             log: "", child: null, error: null
         };
         this.jobs.set(id, job);
@@ -269,6 +273,36 @@ export class DashboardJobManager {
         }
     }
 
+    async prepareAdaptiveRuntime(job) {
+        if (!this.machineConfig?.adaptiveRuntime) return null;
+        const health = await this.runtimeHealthBuilder({ machineConfig: this.machineConfig, baseUrl: this.ollamaUrl ?? "http://127.0.0.1:11434" });
+        job.runtime = {
+            checkedAt: health.checkedAt,
+            status: health.status,
+            tier: health.plan?.tier ?? null,
+            model: health.plan?.model ?? null,
+            modelFallbacks: health.plan?.modelFallbacks ?? [],
+            resourcePressure: Boolean(health.plan?.resourcePressure),
+            availableMemoryGiB: health.hardware?.availableMemoryGiB ?? null,
+            warnings: health.warnings ?? []
+        };
+        if (health.blocked) throw new Error(health.warnings?.[0] ?? "Insufficient memory headroom for a local AI job.");
+        const task = JSON.parse(await fs.readFile(job.taskPath, "utf8"));
+        task.model = health.plan.model ?? task.model;
+        task.modelFallbacks = health.plan.modelFallbacks ?? task.modelFallbacks ?? [];
+        if (health.plan.maxContextTokens) task.maxContextTokens = Math.min(Number(task.maxContextTokens ?? health.plan.maxContextTokens), Number(health.plan.maxContextTokens));
+        if (health.plan.maxRepairs != null) task.maxRepairs = Math.min(Number(task.maxRepairs ?? health.plan.maxRepairs), Number(health.plan.maxRepairs));
+        if (task.agentTeam && typeof task.agentTeam === "object") {
+            task.agentTeam.enabled = Boolean(task.agentTeam.enabled && health.plan.agentTeamEnabled !== false);
+            if (health.plan.maxReviewRounds != null) task.agentTeam.maxReviewRounds = Math.min(Number(task.agentTeam.maxReviewRounds ?? health.plan.maxReviewRounds), Number(health.plan.maxReviewRounds));
+        }
+        task.metadata = { ...(task.metadata ?? {}), runtimeHealth: { checkedAt: health.checkedAt, tier: health.plan.tier, model: task.model, fallbackModels: task.modelFallbacks, resourcePressure: Boolean(health.plan.resourcePressure) } };
+        await fs.writeFile(job.taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
+        job.taskId = createTaskId(job.taskPath, task);
+        this.append(job, `Adaptive runtime: ${health.status}; tier ${health.plan.tier}; model ${task.model}${task.modelFallbacks?.length ? `; fallbacks ${task.modelFallbacks.join(" -> ")}` : ""}\n`);
+        return health;
+    }
+
     async start(job) {
         if (job.status !== "queued") return;
         job.status = "running";
@@ -276,6 +310,23 @@ export class DashboardJobManager {
         job.startedAt = new Date().toISOString();
         job.completedAt = null;
         job.error = null;
+        await this.persist();
+        if (this.machineConfig?.adaptiveRuntime) {
+            job.phase = "resource_check";
+            await this.persist();
+            try {
+                await this.prepareAdaptiveRuntime(job);
+            } catch (error) {
+                job.status = "failed";
+                job.phase = "resource_blocked";
+                job.error = error.message;
+                job.completedAt = new Date().toISOString();
+                await this.persist();
+                this.drain();
+                return;
+            }
+        }
+        job.phase = "checkpointing";
         await this.persist();
         try {
             const checkpoint = await createWorkspaceCheckpoint(job.workspace, job.id);

@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { createDashboardServer } from "../dashboard/server.js";
 import { loadMachineConfig } from "./system-inspector.js";
+import { buildRuntimeHealth } from "./runtime-health.js";
 
 export async function defaultWorkspace({ env = process.env, homedir = os.homedir(), platform = process.platform } = {}) {
     if (env.FORGEPILOT_WORKSPACE) return path.resolve(env.FORGEPILOT_WORKSPACE);
@@ -27,8 +28,9 @@ export async function launchForgePilot({ workspace, port = 3210, openBrowser = t
     const resolved = path.resolve(workspace ?? await defaultWorkspace());
     await fs.mkdir(resolved, { recursive: true });
     const machineConfig = await loadMachineConfig().catch(() => null);
-    const dashboard = await createDashboardServer({ workspace: resolved, port, launcher: { machineConfig } });
+    const health = await buildRuntimeHealth({ machineConfig }).catch((error) => ({ status: "limited", warnings: [error.message], plan: machineConfig ?? null, ollama: { available: false, models: [] } }));
+    const dashboard = await createDashboardServer({ workspace: resolved, port, launcher: { machineConfig, health } });
     const url = `http://${dashboard.host}:${dashboard.port}/`;
     if (openBrowser) await openLocalUrl(url);
-    return { ...dashboard, url, machineConfig };
+    return { ...dashboard, url, machineConfig, health };
 }

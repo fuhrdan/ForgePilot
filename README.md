@@ -1,8 +1,8 @@
-# ForgePilot v0.13.0
+# ForgePilot v0.14.0
 
 **A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center with reversible workspace safety.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.13 control center with saved projects, reusable recipes, a persistent low-resource-friendly job queue, risk preflight, and conflict-safe rollback.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a persistent control center with saved projects, reusable recipes, a low-resource-friendly job queue, risk preflight, conflict-safe rollback, and v0.14 adaptive runtime health/model fallback.
 
 ## Windows: one-click install and run
 
@@ -21,6 +21,26 @@ Low-resource examples:
 - Balanced machine: 7B coding model by default; 14B only when RAM/VRAM is sufficient.
 
 The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
+
+
+## v0.14 adaptive runtime health and fallback
+
+ForgePilot now re-checks **current** memory headroom immediately before each dashboard AI job instead of relying only on the install/launch-time profile. It only downgrades under pressure; it never silently scales a job up beyond the configured machine plan.
+
+- Critical headroom below 1.25 GiB blocks the AI job before it can thrash the machine.
+- A balanced configuration can temporarily fall back to low-resource/minimal context, repair budget, review rounds, and single-agent behavior when free RAM drops.
+- ForgePilot asks only the local Ollama endpoint which models are already installed and prefers a compatible smaller installed model when the preferred model is unavailable.
+- Ollama planner calls have a bounded fallback chain for retryable local-runtime failures such as model-not-found, server-busy, or memory-related 5xx failures.
+- `forgepilot health [workspace]` performs a local self-test for Node, workspace access, memory headroom, and optional Ollama availability.
+- The one-click installer runs the health test automatically; the one-click launcher shows runtime health and the dashboard displays the current status/model/fallback chain.
+
+Example fallback chain on a balanced system:
+
+```text
+qwen2.5-coder:7b
+  -> qwen2.5-coder:3b
+  -> qwen2.5-coder:1.5b
+```
 
 ## v0.12 persistent project workspace
 

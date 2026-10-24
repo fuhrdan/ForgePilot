@@ -24,10 +24,11 @@ import { signReport, verifyReportProvenance } from "./security/provenance.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
 import { launchForgePilot } from "./product/launcher.js";
+import { runSelfTest } from "./product/runtime-health.js";
 import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -35,6 +36,7 @@ function usage() {
 `  forgepilot init <workspace>\n` +
 `  forgepilot doctor\n` +
 `  forgepilot setup [--json]\n` +
+`  forgepilot health [workspace] [--json]\n` +
 `  forgepilot launch [workspace] [--port N] [--no-browser]\n` +
 `  forgepilot profile [auto|low-resource|balanced|high-quality]\n` +
 `  forgepilot recover [workspace]\n` +
@@ -48,7 +50,10 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Local control center (v0.13):\n` +
+`Adaptive runtime health (v0.14):\n` +
+`  health runs a local self-test, checks current memory headroom/Ollama, and reports the safe model/fallback plan.\n` +
+`  Dashboard jobs re-check resources before launch and may downgrade to a smaller installed model under pressure.\n\n` +
+`Local control center (v0.13+):\n` +
 `  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local control center in a browser.
   The dashboard can analyze repositories and start/cancel verified jobs with explicit capability grants.\n` +
 `  Windows release includes INSTALL_FORGEPILOT.cmd and RUN_FORGEPILOT.cmd for double-click install/run.\n\n` +
@@ -125,7 +130,8 @@ function buildPlanner(plannerName, task, options) {
     if (plannerName === "ollama") {
         return new OllamaPlanner({
             model: options.model ?? task.model ?? "qwen2.5-coder:7b",
-            baseUrl: options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434"
+            baseUrl: options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434",
+            fallbackModels: task.modelFallbacks ?? []
         });
     }
     if (plannerName === "scripted") return new ScriptedPlanner();
@@ -173,7 +179,9 @@ async function runTask(taskFile, options) {
     const profile = selectedProfileName ? resolveProfile(selectedProfileName) : null;
     const useMachineDefaults = !explicitProfile && machineConfig;
     const defaultContext = useMachineDefaults?.maxContextTokens ?? profile?.maxContextTokens;
-    const task = defaultContext ? { ...rawTask, maxContextTokens: rawTask.maxContextTokens ?? defaultContext } : rawTask;
+    const task = { ...rawTask };
+    if (defaultContext) task.maxContextTokens = rawTask.maxContextTokens ?? defaultContext;
+    if (useMachineDefaults?.modelFallbacks && task.modelFallbacks == null) task.modelFallbacks = useMachineDefaults.modelFallbacks;
     const configuredVisionModel = useMachineDefaults && Object.prototype.hasOwnProperty.call(useMachineDefaults, "visionModel")
         ? useMachineDefaults.visionModel
         : profile?.visionModel;
@@ -201,11 +209,11 @@ async function runTask(taskFile, options) {
         const baseUrl = effectiveOptions["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434";
         const fallbackModel = effectiveOptions.model ?? task.model ?? "qwen2.5-coder:7b";
         const modelFor = (role, optionName) => effectiveOptions[optionName] ?? roleModels[role] ?? fallbackModel;
-        roleAdapters.planner = new OllamaPlanner({ model: modelFor("planner", "model"), baseUrl });
-        roleAdapters.implementer = new OllamaPlanner({ model: modelFor("implementer", "implementer-model"), baseUrl });
-        roleAdapters.debugger = new OllamaPlanner({ model: modelFor("debugger", "debugger-model"), baseUrl });
-        roleAdapters.reviewer = new OllamaPlanner({ model: modelFor("reviewer", "reviewer-model"), baseUrl });
-        roleAdapters.verifier = new OllamaPlanner({ model: modelFor("verifier", "verifier-model"), baseUrl });
+        roleAdapters.planner = new OllamaPlanner({ model: modelFor("planner", "model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
+        roleAdapters.implementer = new OllamaPlanner({ model: modelFor("implementer", "implementer-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
+        roleAdapters.debugger = new OllamaPlanner({ model: modelFor("debugger", "debugger-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
+        roleAdapters.reviewer = new OllamaPlanner({ model: modelFor("reviewer", "reviewer-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
+        roleAdapters.verifier = new OllamaPlanner({ model: modelFor("verifier", "verifier-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
     }
     const agentTeam = new AgentTeam({
         adapter: planner,
@@ -464,6 +472,22 @@ async function compareImagesCommand(actualArg, baselineArg, options) {
     if (!passed) process.exitCode = 2;
 }
 
+async function healthCommand(workspaceArg = ".", options = {}) {
+    const result = await runSelfTest({ workspace: workspaceArg });
+    if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.passed) process.exitCode = 2;
+        return;
+    }
+    console.log(`ForgePilot v${VERSION} health`);
+    for (const check of result.checks) console.log(`${check.passed ? "[PASS]" : check.optional ? "[WARN]" : "[FAIL]"} ${check.name}: ${check.detail ?? ""}`);
+    console.log(`Runtime: ${result.health.status}; tier ${result.health.plan.tier}; model ${result.health.plan.model}`);
+    if (result.health.plan.modelFallbacks?.length) console.log(`Fallbacks: ${result.health.plan.modelFallbacks.join(" -> ")}`);
+    for (const warning of result.health.warnings ?? []) console.log(`NOTE: ${warning}`);
+    console.log(`Result: ${result.passed ? "PASS" : "FAIL"}`);
+    if (!result.passed) process.exitCode = 2;
+}
+
 async function setupCommand(options = {}) {
     const hardware = await inspectSystem();
     const plan = recommendMachinePlan(hardware);
@@ -561,6 +585,7 @@ async function main() {
     if (["version", "--version", "-v"].includes(command)) return console.log(VERSION);
     if (command === "doctor") return doctor();
     if (command === "setup") { const { options } = parseOptions(rest); return setupCommand(options); }
+    if (command === "health") { const { options, positionals } = parseOptions(rest); return healthCommand(positionals[0] ?? ".", options); }
     if (command === "launch") { const { options, positionals } = parseOptions(rest); return launchCommand(positionals[0], options); }
     if (command === "profile") return profileCommand(rest[0] ?? "auto");
     if (command === "recover") return recoverCommand(rest[0] ?? ".");

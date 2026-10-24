@@ -43,11 +43,13 @@ if ($ollama) {
     }
 }
 
-Write-Host "ForgePilot v0.13.0"
+Write-Host "ForgePilot v0.14.0"
 Write-Host "Machine tier: $($config.tier)"
 Write-Host "RAM: $($config.hardware.memoryGiB) GiB total / $($config.hardware.availableMemoryGiB) GiB currently available"
 Write-Host "Model: $($config.model)"
 Write-Host "Workspace: $Workspace"
+Write-Host "Runtime health:"
+& $nodePath (Join-Path $InstallDir "src\cli.js") health $Workspace | Out-Host
 Write-Host "Opening local ForgePilot dashboard..."
 Write-Host "Close this window to stop the dashboard."
 & $nodePath (Join-Path $InstallDir "src\cli.js") launch $Workspace --port 0

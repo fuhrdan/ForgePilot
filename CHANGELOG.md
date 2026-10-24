@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.14.0 — Adaptive Runtime Health + Low-Resource Model Fallback
+
+### Added
+- `forgepilot health [workspace]` local self-test for Node 22+, workspace read/write access, current RAM headroom, and optional local Ollama availability.
+- Runtime-health dashboard card and `/api/health` loopback endpoint.
+- Per-job resource recheck before queued dashboard AI work starts.
+- Conservative runtime governor that can downgrade context, repair budget, review rounds, multi-agent mode, and model when current free RAM is worse than the configured plan.
+- Local Ollama installed-model discovery via `127.0.0.1` only.
+- Bounded coding-model fallback chains (for example 7B -> 3B -> 1.5B).
+- Ollama planner retry on retryable local-runtime failures without shell/network download behavior.
+- One-click installer health/self-test log and one-click launcher health display.
+- 8 new adaptive-runtime regression tests.
+
+### Low-resource safety
+- ForgePilot never auto-upgrades beyond the configured machine plan during a job; runtime adaptation only keeps or reduces resource use.
+- Local AI job launch is blocked before checkpoint/execution when less than 1.25 GiB RAM is currently available.
+- Missing Ollama remains an optional/limited state rather than making deterministic ForgePilot features unusable.
+- Model fallback only targets configured/local model names and never downloads a model during an engineering job.
+
+### Validation
+- Full regression suite: 117/117 passing before release packaging; existing v0.1-v0.13 behavior remains covered.
+- New tests cover fallback ordering, local Ollama discovery, pressure-only downgrade, installed-model selection, critical-memory blocking, self-test semantics, real HTTP planner fallback, and dashboard task throttling.
+
 ## 0.13.0 — Workspace Intelligence + Reversible Change Safety
 
 ### Added
