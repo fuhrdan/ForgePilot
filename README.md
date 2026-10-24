@@ -1,8 +1,8 @@
-# ForgePilot v0.10.0
+# ForgePilot v0.11.0
 
-**A local-first verified software-engineering agent with a one-click Windows install/run path and automatic low-resource tuning.**
+**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a browser-based local control center.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, and v0.10 automatic system tuning.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.11 browser control center for starting verified jobs without writing task JSON by hand.
 
 ## Windows: one-click install and run
 
@@ -21,6 +21,22 @@ Low-resource examples:
 - Balanced machine: 7B coding model by default; 14B only when RAM/VRAM is sufficient.
 
 The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
+
+## v0.11 local control center
+
+After installation, double-click the **ForgePilot** desktop shortcut. The browser dashboard now lets you:
+
+- enter or paste a repository/workspace path;
+- analyze the repository before making changes;
+- describe an engineering goal in plain English;
+- choose Safe, Standard, or Thorough autonomy;
+- explicitly approve file writes, local commands, computer control, external network, secrets, and sandbox networking;
+- optionally request a disposable Docker/Podman sandbox;
+- start/cancel verified jobs;
+- watch live stdout/stderr and coarse execution phase;
+- see whether the final JSON report has valid signed provenance.
+
+Dashboard-created tasks fail closed for capability categories you did not approve. The control API is loopback-only and every mutating request requires a random per-launch control token embedded in the local page; framing is denied and the page uses a restrictive Content Security Policy.
 
 ## Requirements / bootstrap behavior
 
@@ -198,13 +214,13 @@ node src/cli.js profile high-quality
 
 Profiles set sensible defaults for coding model, vision model, context budget, repair budget, and review rounds when the task/CLI has not already overridden them.
 
-## Local dashboard
+## Local control center
 
 ```powershell
 node src/cli.js dashboard . --port 3210
 ```
 
-The dashboard binds to `127.0.0.1` and shows local run history, status, ForgePilot version, and whether each report's provenance verifies.
+The dashboard binds to `127.0.0.1`. In v0.11 it can analyze repositories, create guarded Ollama tasks, choose autonomy level, grant only selected capability categories, start/cancel jobs, stream recent job logs, and show signed run history. The CLI remains available for advanced task JSON, secrets, computer-control, and custom-model workflows.
 
 ## Native Windows UI Automation
 
@@ -235,6 +251,8 @@ This copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, writes a `forgepilot.cmd`
 
 ## Existing guarantees retained
 
+- **v0.10:** one-click Windows install/run and machine-adaptive low-resource defaults.
+- **v0.9:** secrets, explicit approvals, signed provenance, recovery journals, profiles, and native Windows UI Automation.
 - **v0.8:** persistent CDP/replay computer sessions and replayable evidence traces.
 - **v0.7:** Planner/Reviewer/Verifier read-only separation; Implementer/Debugger mutation proposals only.
 - **v0.6:** PNG visual verification and frozen visual baselines.
@@ -244,4 +262,4 @@ This copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, writes a `forgepilot.cmd`
 - **v0.2:** bounded repair and resume.
 - **v0.1:** guarded execution and independent verification.
 
-See `docs/PRODUCT_HARDENING.md`, `docs/WINDOWS_UI.md`, `docs/COMPUTER_CONTROL.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md`.
+See `docs/CONTROL_CENTER.md`, `docs/ONE_CLICK_WINDOWS.md`, `docs/PRODUCT_HARDENING.md`, `docs/WINDOWS_UI.md`, `docs/COMPUTER_CONTROL.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md`.

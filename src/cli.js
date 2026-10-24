@@ -25,7 +25,7 @@ import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
 import { launchForgePilot } from "./product/launcher.js";
 
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -44,8 +44,9 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`One-click desktop flow (v0.10):\n` +
-`  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local dashboard in a browser.\n` +
+`Local control center (v0.11):\n` +
+`  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local control center in a browser.
+  The dashboard can analyze repositories and start/cancel verified jobs with explicit capability grants.\n` +
 `  Windows release includes INSTALL_FORGEPILOT.cmd and RUN_FORGEPILOT.cmd for double-click install/run.\n\n` +
 `Product hardening (v0.9+):\n` +
 `  Optional permission categories, environment-backed secrets, recovery journals, signed provenance, hardware/model profiles, local dashboard, and native Windows UI Automation.\n` +
@@ -513,7 +514,8 @@ async function dashboardCommand(workspaceArg, options) {
     const workspace = await ensureWorkspace(workspaceArg ?? ".");
     const port = Number(options.port ?? 3210);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
-    const dashboard = await createDashboardServer({ workspace, port });
+    const machineConfig = await loadMachineConfig().catch(() => null);
+    const dashboard = await createDashboardServer({ workspace, port, launcher: { machineConfig } });
     console.log(`ForgePilot v${VERSION} dashboard`);
     console.log(`Workspace: ${workspace}`);
     console.log(`Open: http://${dashboard.host}:${dashboard.port}/`);

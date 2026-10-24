@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.0 — Local Engineering Control Center
+
+### Added
+- Browser-based repository/job control center on top of the one-click launcher.
+- Repository path + natural-language goal form; task JSON is generated automatically.
+- Repository analysis from the UI with detected projects/frameworks, build/test hints, and relevant file names without returning source excerpts.
+- Safe / Standard / Thorough autonomy presets.
+- Explicit per-job capability grants for file writes, command execution, computer control, external network, secret use, and sandbox networking.
+- Optional disposable-sandbox toggle.
+- Dashboard job queue/status, live recent logs, coarse execution phases, cancellation, and signed-result indicator.
+- `DashboardJobManager` with shell-free child-process launching and bounded in-memory logs.
+- Per-launch dashboard control token required for every mutating API request.
+- Stricter dashboard CSP, frame denial, no-store API responses, and report-path confinement.
+- 9 new control-center regression tests.
+
+### Changed
+- One-click launch now opens a control center instead of a read-only run-history dashboard.
+- UI-created tasks require all sensitive approval categories and grant only the categories explicitly selected by the user.
+- Dashboard-generated tasks inherit the machine-adaptive model/context/repair/review defaults from v0.10.
+- Signed status is derived from the exact `report.json` provenance rather than the human-readable Markdown report.
+
+### Validation
+- Full regression suite: 89/89 passing.
+- End-to-end dashboard-created job accepted through a real ForgePilot subprocess and local Ollama-compatible mock endpoint.
+- Acceptance job produced an evidence artifact, PASS verification, signed JSON provenance, and a readable Markdown report.
+
 ## 0.10.0 — One-Click Windows + Adaptive Low-Resource Runtime
 
 ### Added

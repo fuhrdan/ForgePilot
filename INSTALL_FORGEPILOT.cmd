@@ -1,9 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title ForgePilot v0.10.0 Installer
+title ForgePilot v0.11.0 Installer
 echo ============================================================
-echo  ForgePilot v0.10.0 - One-Click Windows Installer
+echo  ForgePilot v0.11.0 - One-Click Windows Installer
 echo ============================================================
 echo.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-one-click.ps1"
