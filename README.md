@@ -1,8 +1,8 @@
-# ForgePilot v0.14.0
+# ForgePilot v0.15.0
 
 **A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center with reversible workspace safety.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a persistent control center with saved projects, reusable recipes, a low-resource-friendly job queue, risk preflight, conflict-safe rollback, and v0.14 adaptive runtime health/model fallback.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a persistent control center with saved projects, reusable recipes, a low-resource-friendly job queue, risk preflight, conflict-safe rollback, v0.14 adaptive runtime health/model fallback, and v0.15 signed evidence-confidence scoring with privacy-preserving patch review.
 
 ## Windows: one-click install and run
 
@@ -22,6 +22,21 @@ Low-resource examples:
 
 The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
 
+
+
+## v0.15 evidence confidence and patch review
+
+Every executed run now includes a deterministic evidence-confidence assessment in the signed `report.json` and Markdown report. The score is an auditable summary of verification evidence, **not** a probability that the code is bug-free. It rewards independent verification, test-first evidence, Git-scope checks, read-only Verifier approval, visual checks, coverage, and low repair counts while surfacing explicit evidence gaps.
+
+The dashboard adds a conservative post-run adjustment using signed provenance, preflight risk, finalized rollback/checkpoint evidence, change-set size, and sensitive-path changes. Job cards show both the confidence level and a patch-review summary.
+
+Patch review stores metadata only: per-file add/modify/delete state, before/after byte counts, text/binary status, estimated line deltas, and path sensitivity. It does not persist source-file contents. Large/binary files are summarized without decoding them, keeping the feature useful on low-resource machines.
+
+Advanced CLI inspection:
+
+```powershell
+forgepilot assess .forgepilot\runs\<run>\report.json
+```
 
 ## v0.14 adaptive runtime health and fallback
 

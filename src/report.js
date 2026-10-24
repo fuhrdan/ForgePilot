@@ -38,6 +38,19 @@ function renderMarkdown(report) {
         lines.push("");
     }
 
+    if (report.confidence) {
+        lines.push("## Evidence Confidence", "");
+        lines.push(`- Score: **${report.confidence.score}/100 (${String(report.confidence.label ?? "unknown").toUpperCase()})**`);
+        lines.push(`- Interpretation: ${report.confidence.interpretation ?? "Deterministic evidence-quality score."}`);
+        for (const item of report.confidence.positives ?? []) lines.push(`- +${item.points}: ${item.reason}`);
+        for (const item of report.confidence.deductions ?? []) lines.push(`- ${item.points}: ${item.reason}`);
+        if (report.confidence.gaps?.length) {
+            lines.push("", "Evidence gaps:");
+            for (const gap of report.confidence.gaps) lines.push(`- ${gap}`);
+        }
+        lines.push("");
+    }
+
     if (report.security) {
         lines.push("## Security / Permissions", "");
         lines.push(`- Secret references: ${report.security.secrets?.length ?? 0}`);

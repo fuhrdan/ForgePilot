@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.14.0",
-  "description": "Local-first verified software engineering agent with one-click Windows install/run, persistent project/recipe/task-queue control center, risk preflight, reversible workspace checkpoints, conflict-safe rollback, adaptive runtime health, automatic low-resource model fallback, automatic low-resource system tuning, signed provenance, secrets, approval gates, recovery, hardware/model profiles, local dashboard, native Windows UI Automation, computer control, multi-agent separation, visual verification, disposable sandboxes, test-first gates, bounded repair, and independent verification.",
+  "version": "0.15.0",
+  "description": "Local-first verified software engineering agent with one-click Windows install/run, persistent project/recipe/task-queue control center, risk preflight, reversible workspace checkpoints, conflict-safe rollback, adaptive runtime health, automatic low-resource model fallback, deterministic evidence confidence, privacy-preserving patch review, automatic low-resource system tuning, signed provenance, secrets, approval gates, recovery, hardware/model profiles, local dashboard, native Windows UI Automation, computer control, multi-agent separation, visual verification, disposable sandboxes, test-first gates, bounded repair, and independent verification.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

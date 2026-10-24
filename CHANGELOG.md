@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0 — Evidence Confidence + Verified Patch Review
+
+- Adds a deterministic 0–100 evidence-confidence score to every signed run report; the score explicitly states that it is not a probability of correctness.
+- Scores deterministic verification, test-first evidence, Git scope, independent Verifier approval, visual checks, coverage, and repair count with transparent reasons and evidence gaps.
+- Dashboard confidence conservatively adjusts the signed score using provenance validity, preflight risk, rollback/checkpoint availability, change-set size, and sensitive-path changes.
+- Adds privacy-preserving patch review metadata with per-file status, byte counts, text/binary classification, estimated line deltas, and path sensitivity; source contents are never stored in patch-review state.
+- Adds `forgepilot assess <report.json>` for CLI evidence review and provenance status.
+- Dashboard job cards and recent-run history now show confidence and patch-review summaries.
+- Retains v0.14 one-click Windows install/run, adaptive resource governor, model fallback, persistent queue, signed provenance, checkpoints, and conflict-safe rollback.
+
 ## 0.14.0 — Adaptive Runtime Health + Low-Resource Model Fallback
 
 ### Added

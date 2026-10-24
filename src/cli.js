@@ -27,8 +27,9 @@ import { launchForgePilot } from "./product/launcher.js";
 import { runSelfTest } from "./product/runtime-health.js";
 import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
+import { buildEvidenceConfidence } from "./quality/confidence.js";
 
-const VERSION = "0.14.0";
+const VERSION = "0.15.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -42,6 +43,7 @@ function usage() {
 `  forgepilot recover [workspace]\n` +
 `  forgepilot dashboard [workspace] [--port N]\n` +
 `  forgepilot verify-run <report.json> [--public-key PATH]\n` +
+`  forgepilot assess <report.json> [--json]\n` +
 `  forgepilot clone <git-url> <workspace>\n` +
 `  forgepilot analyze [workspace] [--goal TEXT] [--max-context-tokens N]\n` +
 `  forgepilot preflight [workspace] --goal TEXT\n` +
@@ -50,7 +52,10 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Adaptive runtime health (v0.14):\n` +
+`Evidence confidence + patch review (v0.15):\n` +
+`  assess explains ForgePilot's deterministic evidence-quality score; the dashboard augments it with signed provenance, risk, checkpoint, and patch metadata.\n` +
+`  Confidence is not a probability of correctness; it is an auditable summary of available verification evidence.\n\n` +
+`Adaptive runtime health (v0.14+):\n` +
 `  health runs a local self-test, checks current memory headroom/Ollama, and reports the safe model/fallback plan.\n` +
 `  Dashboard jobs re-check resources before launch and may downgrade to a smaller installed model under pressure.\n\n` +
 `Local control center (v0.13+):\n` +
@@ -365,6 +370,7 @@ async function runTask(taskFile, options) {
             security: { secrets: secretStore.summary(), approvals: approvalManager.snapshot() },
             sandbox: sandboxInfo
         };
+        report.confidence = buildEvidenceConfidence(report);
 
         await recovery.checkpoint("reporting", { status });
         const safeReport = secretStore.redactObject(report);
@@ -387,6 +393,43 @@ async function runTask(taskFile, options) {
     }
 }
 
+
+async function assessReport(reportPath, options = {}) {
+    const resolved = path.resolve(reportPath);
+    const report = JSON.parse(await fs.readFile(resolved, "utf8"));
+    const confidence = report.confidence ?? buildEvidenceConfidence(report);
+    let provenance = null;
+    try { provenance = await verifyReportProvenance(resolved); } catch { /* legacy or unsigned report */ }
+    const result = {
+        report: resolved,
+        status: report.status ?? null,
+        confidence,
+        signed: Boolean(provenance?.passed),
+        provenance: provenance ? { passed: provenance.passed, signatureValid: provenance.signatureValid, hashValid: provenance.hashValid, keyId: provenance.keyId } : null
+    };
+    if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+    }
+    console.log(`ForgePilot v${VERSION} evidence assessment`);
+    console.log(`Report: ${resolved}`);
+    console.log(`Status: ${result.status ?? "unknown"}`);
+    console.log(`Confidence: ${confidence.score}/100 (${confidence.label.toUpperCase()})`);
+    console.log(`Signed provenance: ${result.signed ? "PASS" : "not verified"}`);
+    console.log(`Interpretation: ${confidence.interpretation}`);
+    if (confidence.positives?.length) {
+        console.log("\nEvidence strengths:");
+        for (const item of confidence.positives) console.log(`  +${item.points}: ${item.reason}`);
+    }
+    if (confidence.deductions?.length) {
+        console.log("\nDeductions:");
+        for (const item of confidence.deductions) console.log(`  ${item.points}: ${item.reason}`);
+    }
+    if (confidence.gaps?.length) {
+        console.log("\nEvidence gaps:");
+        for (const item of confidence.gaps) console.log(`  - ${item}`);
+    }
+}
 
 async function analyzeRepository(workspaceArg, options) {
     const workspace = await ensureWorkspace(workspaceArg ?? ".");
@@ -627,6 +670,12 @@ async function main() {
     if (command === "verify-run") {
         const { options, positionals } = parseOptions(rest);
         return verifyRunCommand(positionals[0], options);
+    }
+
+    if (command === "assess") {
+        const { options, positionals } = parseOptions(rest);
+        if (!positionals[0]) throw new Error("assess requires <report.json>.");
+        return assessReport(positionals[0], options);
     }
 
     if (command === "dashboard") {

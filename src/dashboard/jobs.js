@@ -11,6 +11,8 @@ import { applyRecipe } from "./recipes.js";
 import { buildPreflight } from "../repository/preflight.js";
 import { createWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, rollbackWorkspaceCheckpoint } from "../repository/checkpoint.js";
 import { buildRuntimeHealth } from "../product/runtime-health.js";
+import { buildPatchReview } from "../repository/patch-review.js";
+import { buildDashboardConfidence } from "../quality/confidence.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -182,6 +184,8 @@ export class DashboardJobManager {
             checkpoint: job.checkpoint ?? null,
             changeSet: job.changeSet ?? null,
             rollback: job.rollback ?? null,
+            patchReview: job.patchReview ?? null,
+            confidence: job.confidence ?? null,
             runtime: job.runtime ?? null,
             log: job.log,
             error: job.error ?? null
@@ -245,7 +249,7 @@ export class DashboardJobManager {
             id, workspace: resolved, goal: cleanGoal, effectiveGoal, recipeId: recipe?.id ?? null, recipeName: recipe?.name ?? null,
             autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
             completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
-            preflight, checkpoint: null, changeSet: null, rollback: null, runtime: null,
+            preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
             log: "", child: null, error: null
         };
         this.jobs.set(id, job);
@@ -390,6 +394,25 @@ export class DashboardJobManager {
                 }
             };
             if (job.checkpoint) job.checkpoint.rollbackAvailable = (checkpoint.changes ?? []).length > 0;
+            try {
+                job.patchReview = await buildPatchReview(job.workspace, job.id);
+            } catch (error) {
+                job.patchReview = { version: 1, unavailable: true, error: error.message, summary: { fileCount: checkpoint.changes?.length ?? 0 } };
+            }
+            try {
+                const report = job.reportPath ? JSON.parse(await fs.readFile(path.resolve(job.reportPath), "utf8")) : null;
+                if (report) {
+                    job.confidence = buildDashboardConfidence(report, {
+                        signed: job.signed,
+                        preflight: job.preflight,
+                        changeSet: job.changeSet,
+                        checkpoint: job.checkpoint,
+                        patchReview: job.patchReview
+                    });
+                }
+            } catch (error) {
+                job.confidence = { score: 0, label: "low", unavailable: true, error: error.message };
+            }
         } catch (error) {
             job.error = job.error ? `${job.error}; checkpoint finalization: ${error.message}` : `Checkpoint finalization: ${error.message}`;
             if (finalStatus === "pass") finalStatus = "fail";
