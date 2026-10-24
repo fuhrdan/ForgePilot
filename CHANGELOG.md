@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.12.0 — Persistent Project Workspaces + Reusable Recipes + Resumable Queue
+
+### Added
+- Persistent saved-project registry with repository path, recipe, autonomy, approvals, and sandbox defaults.
+- Four immutable built-in engineering recipes: fix bug test-first, add feature, read-only repository review, and prepare release.
+- Persistent custom recipe creation/deletion from the browser control center.
+- Recipe goal expansion while preserving explicit capability approvals and existing safety boundaries.
+- Persistent FIFO dashboard task queue with conservative default concurrency of one local engineering job.
+- Global queue pause/resume controls.
+- Per-job pause/resume for queued jobs, cancellation for queued/paused/running jobs, and auditable retry for terminal/interrupted jobs.
+- Queue journal under `.forgepilot/dashboard/queue.json`; saved projects and recipes live beside it.
+- Dashboard restart recovery: stale running jobs become `interrupted` instead of being guessed PASS/FAIL.
+- `retryOf` linkage in job metadata and public dashboard evidence.
+- Project/recipe/queue HTTP APIs protected by the existing per-launch control token.
+- 10 new project/recipe/queue regression tests.
+
+### Changed
+- Dashboard-created jobs now enter the persistent queue instead of spawning immediately.
+- Default queue concurrency is one to avoid competing local-LLM jobs on low-resource machines.
+- v0.12 does not fake suspension of an already-running Windows child process; pause/resume is intentionally limited to queued jobs, while running jobs can be cancelled and retried.
+- The browser dashboard can select saved projects and recipes, persist current settings, and show queue state/retry lineage.
+
+### Validation
+- Full regression suite: 99/99 passing.
+- Existing v0.1-v0.11 behavior remains covered.
+- Release acceptance includes real subprocess FIFO queueing, built-in recipe use, signed PASS provenance, retry lineage, and exact-ZIP clean-room revalidation.
+
 ## 0.11.0 — Local Engineering Control Center
 
 ### Added

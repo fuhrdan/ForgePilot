@@ -7,6 +7,7 @@ import { buildRepositoryContext } from "../repository/context.js";
 import { createTaskId } from "../core/state.js";
 import { verifyReportProvenance } from "../security/provenance.js";
 import { APPROVAL_CATEGORIES } from "../security/approvals.js";
+import { applyRecipe } from "./recipes.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -26,8 +27,8 @@ async function ensureDirectory(target) {
     return resolved;
 }
 
-function sanitizeApprovals(items) {
-    const list = Array.isArray(items) ? items : [];
+function sanitizeApprovals(items, fallback = []) {
+    const list = Array.isArray(items) ? items : fallback;
     return [...new Set(list.map(String).filter((item) => APPROVAL_CATEGORIES.includes(item)))];
 }
 
@@ -48,8 +49,13 @@ function summarizeRepository(repository) {
     };
 }
 
+function persistentJob(job) {
+    const { child, ...rest } = job;
+    return rest;
+}
+
 export class DashboardJobManager {
-    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null } = {}) {
+    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null, rootWorkspace = null, maxConcurrentJobs = 1, recipeStore = null } = {}) {
         this.machineConfig = machineConfig;
         this.nodePath = nodePath;
         this.cliPath = cliPath;
@@ -57,6 +63,54 @@ export class DashboardJobManager {
         this.maxLogChars = maxLogChars;
         this.ollamaUrl = ollamaUrl;
         this.jobs = new Map();
+        this.rootWorkspace = rootWorkspace ? path.resolve(rootWorkspace) : null;
+        this.statePath = this.rootWorkspace ? path.join(this.rootWorkspace, ".forgepilot", "dashboard", "queue.json") : null;
+        this.maxConcurrentJobs = Math.max(1, Math.min(4, Number(maxConcurrentJobs) || 1));
+        this.queuePaused = false;
+        this.loaded = false;
+        this.recipeStore = recipeStore;
+    }
+
+    configureRoot(rootWorkspace) {
+        if (this.rootWorkspace) return;
+        this.rootWorkspace = path.resolve(rootWorkspace);
+        this.statePath = path.join(this.rootWorkspace, ".forgepilot", "dashboard", "queue.json");
+    }
+
+    setRecipeStore(store) {
+        this.recipeStore = store;
+    }
+
+    async initialize() {
+        if (this.loaded) return;
+        this.loaded = true;
+        if (!this.statePath) return;
+        try {
+            const saved = JSON.parse(await fs.readFile(this.statePath, "utf8"));
+            this.queuePaused = Boolean(saved?.queuePaused);
+            for (const value of Array.isArray(saved?.jobs) ? saved.jobs : []) {
+                if (!value?.id || !value?.workspace) continue;
+                const job = { ...value, child: null };
+                if (job.status === "running" || job.phase === "cancelling") {
+                    job.status = "interrupted";
+                    job.phase = "interrupted";
+                    job.error = "ForgePilot dashboard stopped while this job was running.";
+                    job.completedAt = new Date().toISOString();
+                }
+                this.jobs.set(job.id, job);
+            }
+            await this.persist();
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+        }
+        if (!this.queuePaused) this.drain();
+    }
+
+    async persist() {
+        if (!this.statePath) return;
+        await fs.mkdir(path.dirname(this.statePath), { recursive: true });
+        const jobs = [...this.jobs.values()].map(persistentJob);
+        await fs.writeFile(this.statePath, JSON.stringify({ version: 1, queuePaused: this.queuePaused, jobs }, null, 2) + "\n", "utf8");
     }
 
     async analyze({ workspace, goal = "" }) {
@@ -78,11 +132,25 @@ export class DashboardJobManager {
         return job ? this.publicJob(job) : null;
     }
 
+    queueStatus() {
+        const values = [...this.jobs.values()];
+        return {
+            paused: this.queuePaused,
+            maxConcurrentJobs: this.maxConcurrentJobs,
+            running: values.filter((job) => job.status === "running").length,
+            queued: values.filter((job) => job.status === "queued").length,
+            pausedJobs: values.filter((job) => job.status === "paused").length
+        };
+    }
+
     publicJob(job) {
         return {
             id: job.id,
             workspace: job.workspace,
             goal: job.goal,
+            effectiveGoal: job.effectiveGoal === job.goal ? undefined : job.effectiveGoal,
+            recipeId: job.recipeId ?? null,
+            recipeName: job.recipeName ?? null,
             autonomy: job.autonomy,
             approvals: job.approvals,
             sandbox: job.sandbox,
@@ -97,6 +165,7 @@ export class DashboardJobManager {
             reportPath: job.reportPath,
             markdownPath: job.markdownPath,
             signed: job.signed,
+            retryOf: job.retryOf ?? null,
             log: job.log,
             error: job.error ?? null
         };
@@ -118,19 +187,25 @@ export class DashboardJobManager {
         }
     }
 
-    async create({ workspace, goal, autonomy = "standard", approvals = ["file_write", "command_exec"], sandbox = false }) {
+    async create({ workspace, goal, autonomy = null, approvals = undefined, sandbox = undefined, recipeId = null, retryOf = null }) {
+        await this.initialize();
         const resolved = await ensureDirectory(workspace);
-        const cleanGoal = cleanText(goal);
+        const cleanGoal = cleanText(goal, 12000);
         if (!cleanGoal) throw new Error("Goal is required.");
-        const mode = AUTONOMY[autonomy] ?? AUTONOMY.standard;
-        const grants = sanitizeApprovals(approvals);
+        const recipe = recipeId && this.recipeStore ? await this.recipeStore.get(recipeId) : null;
+        if (recipeId && !recipe) throw new Error(`Unknown recipe: ${recipeId}`);
+        const selectedAutonomy = autonomy ?? recipe?.autonomy ?? "standard";
+        const mode = AUTONOMY[selectedAutonomy] ?? AUTONOMY.standard;
+        const grants = sanitizeApprovals(approvals, recipe?.approvals ?? ["file_write", "command_exec"]);
+        const sandboxEnabled = sandbox === undefined ? Boolean(recipe?.sandbox) : Boolean(sandbox);
+        const effectiveGoal = applyRecipe(recipe, cleanGoal);
         const id = crypto.randomBytes(8).toString("hex");
         const taskDir = path.join(resolved, ".forgepilot", "ui-tasks");
         await fs.mkdir(taskDir, { recursive: true });
         const taskPath = path.join(taskDir, `${id}.json`);
         const machine = this.machineConfig ?? {};
         const task = {
-            goal: cleanGoal,
+            goal: effectiveGoal,
             planner: "ollama",
             model: machine.model ?? "qwen2.5-coder:7b",
             ...(this.ollamaUrl ? { ollamaUrl: this.ollamaUrl } : {}),
@@ -142,30 +217,50 @@ export class DashboardJobManager {
                 requireVerifierApproval: true
             },
             permissions: { require: [...APPROVAL_CATEGORIES] },
-            sandbox: sandbox ? { enabled: true, network: "none" } : { enabled: false },
-            metadata: { createdBy: "forgepilot-dashboard", dashboardJobId: id, autonomy }
+            sandbox: sandboxEnabled ? { enabled: true, network: "none" } : { enabled: false },
+            metadata: { createdBy: "forgepilot-dashboard", dashboardJobId: id, autonomy: selectedAutonomy, recipeId: recipe?.id ?? null, retryOf }
         };
         await fs.writeFile(taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
         const taskId = createTaskId(taskPath, task);
         const job = {
-            id, workspace: resolved, goal: cleanGoal, autonomy, approvals: grants, sandbox: Boolean(sandbox),
-            status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
-            completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, log: "", child: null
+            id, workspace: resolved, goal: cleanGoal, effectiveGoal, recipeId: recipe?.id ?? null, recipeName: recipe?.name ?? null,
+            autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
+            completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
+            log: "", child: null, error: null
         };
         this.jobs.set(id, job);
-        this.start(job).catch((error) => {
-            job.status = "failed";
-            job.phase = "failed";
-            job.error = error.message;
-            job.completedAt = new Date().toISOString();
-        });
+        await this.persist();
+        this.drain();
         return this.publicJob(job);
     }
 
+    drain() {
+        if (this.queuePaused) return;
+        const running = [...this.jobs.values()].filter((job) => job.status === "running").length;
+        let available = this.maxConcurrentJobs - running;
+        if (available <= 0) return;
+        const queued = [...this.jobs.values()].filter((job) => job.status === "queued").sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+        for (const job of queued) {
+            if (available-- <= 0) break;
+            this.start(job).catch(async (error) => {
+                job.status = "failed";
+                job.phase = "failed";
+                job.error = error.message;
+                job.completedAt = new Date().toISOString();
+                await this.persist();
+                this.drain();
+            });
+        }
+    }
+
     async start(job) {
+        if (job.status !== "queued") return;
         job.status = "running";
         job.phase = "starting";
         job.startedAt = new Date().toISOString();
+        job.completedAt = null;
+        job.error = null;
+        await this.persist();
         const args = [this.cliPath, "run", job.taskPath, "--workspace", job.workspace, "--planner", "ollama", "--apply"];
         if (job.approvals.length) args.push("--approve", job.approvals.join(","));
         if (job.sandbox) args.push("--sandbox");
@@ -186,8 +281,13 @@ export class DashboardJobManager {
         await new Promise((resolve) => child.on("close", (code) => { job.exitCode = code ?? -1; resolve(); }));
         job.child = null;
         job.completedAt = new Date().toISOString();
-        job.status = job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail";
-        job.phase = job.status === "pass" ? "completed" : "failed";
+        if (job.phase === "cancelling") {
+            job.status = "cancelled";
+            job.phase = "cancelled";
+        } else {
+            job.status = job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail";
+            job.phase = job.status === "pass" ? "completed" : "failed";
+        }
         if (!job.reportPath) {
             const match = job.log.match(/^JSON:\s*(.+)$/m);
             if (match) job.reportPath = match[1].trim();
@@ -202,14 +302,64 @@ export class DashboardJobManager {
                 job.signed = Boolean(verified.passed);
             } catch { job.signed = false; }
         }
+        await this.persist();
+        this.drain();
+    }
+
+    async pause(id) {
+        const job = this.jobs.get(String(id));
+        if (!job || job.status !== "queued") return false;
+        job.status = "paused";
+        job.phase = "paused";
+        await this.persist();
+        return true;
+    }
+
+    async resume(id) {
+        const job = this.jobs.get(String(id));
+        if (!job || job.status !== "paused") return false;
+        job.status = "queued";
+        job.phase = "queued";
+        await this.persist();
+        this.drain();
+        return true;
+    }
+
+    async retry(id) {
+        const job = this.jobs.get(String(id));
+        if (!job || ["queued", "running", "paused"].includes(job.status)) return null;
+        return this.create({
+            workspace: job.workspace,
+            goal: job.goal,
+            autonomy: job.autonomy,
+            approvals: job.approvals,
+            sandbox: job.sandbox,
+            recipeId: job.recipeId,
+            retryOf: job.id
+        });
+    }
+
+    async setQueuePaused(value) {
+        this.queuePaused = Boolean(value);
+        await this.persist();
+        if (!this.queuePaused) this.drain();
+        return this.queueStatus();
     }
 
     cancel(id) {
         const job = this.jobs.get(String(id));
         if (!job) return false;
+        if (job.status === "queued" || job.status === "paused") {
+            job.status = "cancelled";
+            job.phase = "cancelled";
+            job.completedAt = new Date().toISOString();
+            this.persist().catch(() => {});
+            return true;
+        }
         if (job.child && job.status === "running") {
-            job.child.kill("SIGTERM");
             job.phase = "cancelling";
+            job.child.kill("SIGTERM");
+            this.persist().catch(() => {});
             return true;
         }
         return false;

@@ -176,7 +176,7 @@ $shortcut.Save()
 
 Write-Host "[7/7] Verifying installation..."
 $version = (& $node (Join-Path $InstallDir "src\cli.js") --version).Trim()
-if ($version -ne "0.11.0") { throw "Installed ForgePilot version check failed: $version" }
+if ($version -ne "0.12.0") { throw "Installed ForgePilot version check failed: $version" }
 
 $summary = @"
 ForgePilot $version installed successfully.

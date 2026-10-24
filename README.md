@@ -1,8 +1,8 @@
-# ForgePilot v0.11.0
+# ForgePilot v0.12.0
 
-**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a browser-based local control center.**
+**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.11 browser control center for starting verified jobs without writing task JSON by hand.
+ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a v0.12 control center with saved projects, reusable recipes, and a persistent low-resource-friendly job queue.
 
 ## Windows: one-click install and run
 
@@ -22,21 +22,36 @@ Low-resource examples:
 
 The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
 
-## v0.11 local control center
+## v0.12 persistent project workspace
 
-After installation, double-click the **ForgePilot** desktop shortcut. The browser dashboard now lets you:
+After installation, double-click the **ForgePilot** desktop shortcut. The browser control center now lets you:
 
-- enter or paste a repository/workspace path;
-- analyze the repository before making changes;
-- describe an engineering goal in plain English;
-- choose Safe, Standard, or Thorough autonomy;
-- explicitly approve file writes, local commands, computer control, external network, secrets, and sandbox networking;
-- optionally request a disposable Docker/Podman sandbox;
-- start/cancel verified jobs;
-- watch live stdout/stderr and coarse execution phase;
-- see whether the final JSON report has valid signed provenance.
+- save repositories as named ForgePilot projects;
+- persist per-project recipe, autonomy, approval, and sandbox defaults;
+- choose built-in workflows for **Fix bug — test first**, **Add feature**, **Review repository**, or **Prepare release**;
+- save/delete your own custom reusable recipes;
+- queue multiple engineering jobs without running multiple local LLM workloads at once;
+- pause/resume the whole queue;
+- pause/resume jobs that have not started;
+- cancel queued, paused, or running jobs;
+- retry completed/failed/cancelled/interrupted jobs with an auditable `retryOf` link;
+- recover queue state after a dashboard restart;
+- continue to analyze repositories, choose autonomy, grant capabilities explicitly, watch live logs, and inspect signed results.
 
-Dashboard-created tasks fail closed for capability categories you did not approve. The control API is loopback-only and every mutating request requires a random per-launch control token embedded in the local page; framing is denied and the page uses a restrictive Content Security Policy.
+The default queue concurrency is **one job**. This is deliberate: on a low-resource workstation, two simultaneous local coding-model sessions can cause severe memory pressure and make both tasks slower or unreliable.
+
+ForgePilot does not pretend to freeze an already-running Windows process. Per-job pause/resume is limited to queued jobs. A running job can be cancelled and retried.
+
+Saved control-center state is stored under the launcher workspace:
+
+```text
+.forgepilot/dashboard/
+    projects.json
+    recipes.json
+    queue.json
+```
+
+Built-in recipes cannot be overwritten or deleted. Recipes only add reusable task instructions/defaults; they never bypass approval gates, command allowlists, repository confinement, sandbox rules, agent-role separation, or provenance verification.
 
 ## Requirements / bootstrap behavior
 
@@ -220,7 +235,7 @@ Profiles set sensible defaults for coding model, vision model, context budget, r
 node src/cli.js dashboard . --port 3210
 ```
 
-The dashboard binds to `127.0.0.1`. In v0.11 it can analyze repositories, create guarded Ollama tasks, choose autonomy level, grant only selected capability categories, start/cancel jobs, stream recent job logs, and show signed run history. The CLI remains available for advanced task JSON, secrets, computer-control, and custom-model workflows.
+The dashboard binds to `127.0.0.1`. In v0.12 it adds saved projects, reusable recipes, persistent FIFO queueing, queued pause/resume, cancellation, retry lineage, and restart recovery on top of the v0.11 repository analysis/job controls. The CLI remains available for advanced task JSON, secrets, computer-control, and custom-model workflows.
 
 ## Native Windows UI Automation
 
@@ -251,6 +266,8 @@ This copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, writes a `forgepilot.cmd`
 
 ## Existing guarantees retained
 
+- **v0.12:** saved projects, reusable recipes, and persistent low-resource-friendly task queue.
+- **v0.11:** browser repository analysis and natural-language job control.
 - **v0.10:** one-click Windows install/run and machine-adaptive low-resource defaults.
 - **v0.9:** secrets, explicit approvals, signed provenance, recovery journals, profiles, and native Windows UI Automation.
 - **v0.8:** persistent CDP/replay computer sessions and replayable evidence traces.
@@ -262,4 +279,4 @@ This copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, writes a `forgepilot.cmd`
 - **v0.2:** bounded repair and resume.
 - **v0.1:** guarded execution and independent verification.
 
-See `docs/CONTROL_CENTER.md`, `docs/ONE_CLICK_WINDOWS.md`, `docs/PRODUCT_HARDENING.md`, `docs/WINDOWS_UI.md`, `docs/COMPUTER_CONTROL.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md`.
+See `docs/PROJECT_WORKSPACES.md`, `docs/CONTROL_CENTER.md`, `docs/ONE_CLICK_WINDOWS.md`, `docs/PRODUCT_HARDENING.md`, `docs/WINDOWS_UI.md`, `docs/COMPUTER_CONTROL.md`, `docs/ARCHITECTURE.md`, and `docs/ROADMAP.md`.

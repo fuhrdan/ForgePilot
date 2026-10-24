@@ -25,7 +25,7 @@ import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
 import { launchForgePilot } from "./product/launcher.js";
 
-const VERSION = "0.11.0";
+const VERSION = "0.12.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -44,7 +44,7 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Local control center (v0.11):\n` +
+`Local control center (v0.12):\n` +
 `  setup inspects RAM/CPU/GPU/disk/tools and persists safe machine defaults; launch starts the local control center in a browser.
   The dashboard can analyze repositories and start/cancel verified jobs with explicit capability grants.\n` +
 `  Windows release includes INSTALL_FORGEPILOT.cmd and RUN_FORGEPILOT.cmd for double-click install/run.\n\n` +

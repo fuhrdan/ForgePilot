@@ -43,7 +43,7 @@ if ($ollama) {
     }
 }
 
-Write-Host "ForgePilot v0.11.0"
+Write-Host "ForgePilot v0.12.0"
 Write-Host "Machine tier: $($config.tier)"
 Write-Host "RAM: $($config.hardware.memoryGiB) GiB total / $($config.hardware.availableMemoryGiB) GiB currently available"
 Write-Host "Model: $($config.model)"
