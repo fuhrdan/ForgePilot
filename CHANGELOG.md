@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.15.0 — Evidence Confidence + Verified Patch Review
+## 0.16.0 — Just Build It
+
+- Makes a single plain-language **BUILD IT** prompt the default dashboard workflow; project/repository setup is optional.
+- Automatically creates new projects under the ForgePilot workspace when no existing project path is supplied.
+- Forces Simple Build Mode to one coding agent by default, bounded repairs, and only local file-write/command grants; advanced capabilities remain denied unless explicitly used through advanced controls.
+- Adds a hard Ollama generation timeout (120 seconds by default) with visible progress heartbeats and automatic smaller-model fallback.
+- Adds dashboard no-progress and overall-job watchdogs (5 minutes and 30 minutes by default) that terminate stalled work with an explicit reason instead of running indefinitely.
+- Raises the default individual build/test command ceiling to a bounded 5 minutes for legitimate compiles while retaining forced timeout behavior.
+- Adds plain-language live phases and elapsed time to job cards.
+- Adds `forgepilot build <description>` as the CLI equivalent of the Just Build It path.
+- Preserves one-click Windows install/run, adaptive low-resource tuning, signed provenance, reversible checkpoints/rollback, evidence confidence, and all advanced v0.1-v0.15 workflows.
+- Adds 8 regression tests covering automatic project creation, single-agent task policy, model timeout/fallback, silent-child watchdog termination, progress phases, and the token-protected Just Build It API/UI.
+
+## 0.16.0 — Evidence Confidence + Verified Patch Review
 
 - Adds a deterministic 0–100 evidence-confidence score to every signed run report; the score explicitly states that it is not a probability of correctness.
 - Scores deterministic verification, test-first evidence, Git scope, independent Verifier approval, visual checks, coverage, and repair count with transparent reasons and evidence gaps.

@@ -159,13 +159,18 @@ export async function runTaskWithRepairs({
     agentTeam = null,
     computerSession = null,
     approvalManager = null,
-    secretStore = null
+    secretStore = null,
+    onProgress = null
 }) {
+    const progress = (message) => { try { onProgress?.(message); } catch { /* progress must never break engineering */ } };
+    progress("Understanding repository and request");
     const initialContext = await contextFor(workspace, task);
     if (agentTeam?.enabled && resumeState?.multiAgent) agentTeam.restore(resumeState.multiAgent);
+    progress(resumeState?.plan ? "Resuming saved plan" : "Generating implementation plan");
     const planned = resumeState?.plan ?? (agentTeam?.enabled
         ? await agentTeam.prepare(task, initialContext)
         : await planner.plan(task, initialContext));
+    progress(`Plan ready: ${(planned.actions ?? []).length} action(s)`);
     const intendedSourcePaths = (planned.actions ?? [])
         .filter((action) => ["write_file", "replace_text"].includes(action.type) && action.path)
         .map((action) => action.path);
@@ -239,6 +244,7 @@ export async function runTaskWithRepairs({
     let protectedPaths = [...new Set([...protectedTestFiles, ...protectedVisualBaselines])];
 
     if (testFirst && !testFirstEvidence?.red?.validRed) {
+        progress("Creating and proving regression test");
         const authoring = await executeTestAuthoring(testFirst, workspace, { apply: true, executionProvider, approvalManager, secretStore });
         if (authoring.some((item) => item.status === "failed")) {
             const verification = await earlyFailure({
@@ -287,6 +293,7 @@ export async function runTaskWithRepairs({
 
     for (; actionIndex < plan.actions.length; actionIndex++) {
         const action = plan.actions[actionIndex];
+        progress(`Executing action ${actionIndex + 1}/${plan.actions.length}: ${action.type}${action.path ? ` ${action.path}` : action.command ? ` ${action.command}` : ""}`);
         let result;
         if (actionTouchesProtectedTest(action, protectedPaths)) {
             result = { index: actionIndex, type: action.type, status: "failed", path: action.path, error: "Implementation phase cannot modify a protected RED-proven test or visual baseline." };
@@ -314,6 +321,7 @@ export async function runTaskWithRepairs({
 
             while (repairCount < maxRepairs) {
                 repairCount++;
+                progress(`Repairing failure (${repairCount}/${maxRepairs})`);
                 const repairPlan = agentTeam?.enabled
                     ? await agentTeam.debug(task, await contextFor(workspace, task), evidence, repairCount, plan)
                     : await planner.repair(task, await contextFor(workspace, task), evidence, repairCount, plan);
@@ -367,6 +375,7 @@ export async function runTaskWithRepairs({
 
     let agentReview = null;
     if (agentTeam?.enabled) {
+        progress("Running independent review");
         let reviewRound = 0;
         while (true) {
             reviewRound++;
@@ -419,6 +428,7 @@ export async function runTaskWithRepairs({
         }
     }
 
+    progress("Running independent verification");
     let verification = await verifyWithEvidence(plan, workspace, task, gitBaseline, testSnapshot, visual, visualBaselineSnapshot, executionProvider, visionProvider, taskId, agentTeam, approvalManager, secretStore);
     while (
         !verification.passed &&
@@ -460,6 +470,7 @@ export async function runTaskWithRepairs({
         });
     }
 
+    progress(verification.passed ? "Verification passed; finalizing evidence" : "Verification failed; finalizing evidence");
     const coverage = await collectCoverage(workspace);
     state = await saveState(workspace, {
         ...state,

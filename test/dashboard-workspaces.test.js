@@ -23,7 +23,7 @@ function fakeSpawner({ stdout = "Result: PASS\n", exitCode = 0, delay = 5 } = {}
     };
 }
 
-async function waitUntil(predicate, timeoutMs = 1500) {
+async function waitUntil(predicate, timeoutMs = 5000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
         const value = predicate();

@@ -16,7 +16,7 @@ export async function runCommand({
     command,
     args = [],
     cwd,
-    timeoutMs = 120000,
+    timeoutMs = 300000,
     allowedCommands = DEFAULT_ALLOWED_COMMANDS,
     env = {}
 }) {
@@ -27,7 +27,7 @@ export async function runCommand({
     return runRaw(command, args, { cwd, timeoutMs, env });
 }
 
-function runRaw(command, args, { cwd, timeoutMs = 120000, env = {} } = {}) {
+function runRaw(command, args, { cwd, timeoutMs = 300000, env = {} } = {}) {
     return new Promise((resolve) => {
         const startedAt = Date.now();
         let stdout = "";

@@ -86,7 +86,7 @@ export async function executeAction(action, workspace, {
             args,
             env,
             cwd,
-            timeoutMs: Number(action.timeoutMs ?? 120000)
+            timeoutMs: Number(action.timeoutMs ?? 300000)
         });
         const safeResult = secretStore ? secretStore.redactObject(result) : result;
         const expected = Number(action.expectExitCode ?? 0);

@@ -1,8 +1,8 @@
-# ForgePilot v0.15.0
+# ForgePilot v0.16.0
 
 **A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center with reversible workspace safety.**
 
-ForgePilot combines repository intelligence, test-first engineering, bounded repair, Docker/Podman sandboxes, visual verification, separated Planner/Implementer/Debugger/Reviewer/Verifier roles, browser/IDE control, signed provenance, automatic system tuning, and a persistent control center with saved projects, reusable recipes, a low-resource-friendly job queue, risk preflight, conflict-safe rollback, v0.14 adaptive runtime health/model fallback, and v0.15 signed evidence-confidence scoring with privacy-preserving patch review.
+ForgePilot v0.16 makes **Just Build It** the default experience: type a plain-language description, click BUILD IT, and ForgePilot creates or uses a project, builds it with one local coding agent, verifies it, and stops within explicit watchdog limits. The advanced repository intelligence, test-first engineering, bounded repair, sandboxing, visual verification, multi-agent review, signed provenance, rollback, evidence confidence, and patch review remain available behind the advanced controls.
 
 ## Windows: one-click install and run
 
@@ -22,6 +22,38 @@ Low-resource examples:
 
 The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
 
+## v0.16 Just Build It
+
+The default dashboard now starts with one large prompt:
+
+```text
+What do you want ForgePilot to build?
+[ describe the finished software ]
+
+[ BUILD IT ]
+```
+
+A repository is optional. If the existing-project field is blank, ForgePilot creates a new project automatically under `ForgePilot Workspace/Projects/`. Simple Build Mode uses one coding agent by default, grants only local file-write and command execution capabilities, and keeps computer control, external network, secrets, and sandbox networking denied.
+
+Hard watchdogs prevent the silent multi-hour stall that motivated v0.16:
+
+- local model response: **120 seconds** before abort/fallback;
+- individual build/test command: **5 minutes** maximum by default;
+- no useful child-process output: **5 minutes** before the dashboard stops the job;
+- overall simple-build job: **30 minutes** maximum;
+- repairs: at most **2** in Simple Build Mode.
+
+Ollama requests emit progress heartbeats while the model is generating. If a model times out or returns a retryable local-runtime error, ForgePilot automatically tries the configured smaller fallback model. The dashboard exposes plain-language phases such as `Generating implementation`, `Building`, `Repairing failure`, `Verifying`, and `Stopped by watchdog`.
+
+Advanced users can still expand **Advanced engineering controls** for saved projects, recipes, sandboxing, capability grants, repository analysis, deeper multi-agent review, visual verification, and the rest of the existing ForgePilot stack.
+
+CLI equivalent:
+
+```powershell
+forgepilot build "Build a Java desktop app that monitors CPU and RAM and shows live graphs"
+```
+
+Use `--workspace PATH` to apply the same simple flow to an existing project.
 
 
 ## v0.15 evidence confidence and patch review

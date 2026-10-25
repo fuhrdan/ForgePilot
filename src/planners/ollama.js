@@ -30,13 +30,16 @@ function bounded(value, max = 16000) {
 }
 
 export class OllamaPlanner {
-    constructor({ model, baseUrl = "http://127.0.0.1:11434", fallbackModels = [] }) {
+    constructor({ model, baseUrl = "http://127.0.0.1:11434", fallbackModels = [], generationTimeoutMs = 120000, progressIntervalMs = 15000, onProgress = null }) {
         if (!model) throw new Error("Ollama planner requires a model name.");
         this.model = model;
         this.fallbackModels = [...new Set((fallbackModels ?? []).map(String).filter(Boolean))].filter((item) => item !== model);
         this.baseUrl = baseUrl.replace(/\/$/, "");
         this.lastModelUsed = model;
         this.fallbackHistory = [];
+        this.generationTimeoutMs = Math.max(50, Number(generationTimeoutMs) || 120000);
+        this.progressIntervalMs = Math.max(20, Number(progressIntervalMs) || 15000);
+        this.onProgress = typeof onProgress === "function" ? onProgress : null;
     }
 
     async generate(prompt, validator = (value) => value) {
@@ -45,11 +48,26 @@ export class OllamaPlanner {
         for (let index = 0; index < candidates.length; index++) {
             const model = candidates[index];
             try {
-                const response = await fetch(`${this.baseUrl}/api/generate`, {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ model, stream: false, format: "json", prompt })
-                });
+                const controller = new AbortController();
+                const startedAt = Date.now();
+                const timeout = setTimeout(() => controller.abort(new Error(`Model ${model} exceeded ${Math.round(this.generationTimeoutMs / 1000)}s response limit.`)), this.generationTimeoutMs);
+                const heartbeat = setInterval(() => {
+                    const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+                    this.onProgress?.({ phase: "model", model, elapsedSeconds: elapsed, timeoutSeconds: Math.round(this.generationTimeoutMs / 1000), message: `Waiting for ${model} (${elapsed}s / ${Math.round(this.generationTimeoutMs / 1000)}s max)` });
+                }, this.progressIntervalMs);
+                this.onProgress?.({ phase: "model", model, elapsedSeconds: 0, timeoutSeconds: Math.round(this.generationTimeoutMs / 1000), message: `Generating with ${model}` });
+                let response;
+                try {
+                    response = await fetch(`${this.baseUrl}/api/generate`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ model, stream: false, format: "json", prompt }),
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeout);
+                    clearInterval(heartbeat);
+                }
                 if (!response.ok) {
                     const detail = await response.text();
                     const error = new Error(`Ollama returned HTTP ${response.status} for ${model}: ${detail}`);
@@ -61,9 +79,15 @@ export class OllamaPlanner {
                 if (model !== this.model) this.fallbackHistory.push({ from: this.model, to: model, at: new Date().toISOString() });
                 return validator(extractJson(body.response ?? ""));
             } catch (error) {
-                lastError = error;
-                const retryableStatus = error?.status == null || [404, 408, 429, 500, 502, 503, 507].includes(Number(error.status));
-                if (!retryableStatus || index === candidates.length - 1) throw error;
+                const normalized = error?.name === "AbortError" || /aborted|response limit/i.test(String(error?.message ?? ""))
+                    ? Object.assign(new Error(`Ollama model ${model} timed out after ${Math.round(this.generationTimeoutMs / 1000)} seconds.`), { status: 408, code: "MODEL_TIMEOUT" })
+                    : error;
+                lastError = normalized;
+                const retryableStatus = normalized?.status == null || [404, 408, 429, 500, 502, 503, 507].includes(Number(normalized.status));
+                if (retryableStatus && index < candidates.length - 1) {
+                    this.onProgress?.({ phase: "model_fallback", model, nextModel: candidates[index + 1], message: `${model} failed (${normalized.message}); trying ${candidates[index + 1]}` });
+                }
+                if (!retryableStatus || index === candidates.length - 1) throw normalized;
             }
         }
         throw lastError ?? new Error("Ollama generation failed.");
@@ -174,8 +198,21 @@ function buildImplementationPrompt(task, context, strategy) {
         actionSchema() + `Verification supports file_exists, file_contains, command, and git_diff checks.\n\n` + safetyRules();
 }
 
+
+function simpleBuildRules(task) {
+    if (!task?.simpleBuild) return "";
+    return `Simple Build Mode:\n` +
+        `- The user supplied only a desired outcome. Make reasonable implementation decisions without asking follow-up questions.\n` +
+        `- If the workspace is empty, create a complete runnable project rather than a fragment.\n` +
+        `- Prefer standard-library / already-installed tooling and avoid dependency downloads unless the task explicitly requires them.\n` +
+        `- Include practical run instructions or a simple launcher when appropriate for the requested platform.\n` +
+        `- Verification should actually compile/run/test the finished program where possible.\n` +
+        `- Keep the solution small enough for a local low-resource machine to build and verify.\n\n`;
+}
+
 function buildPlanPrompt(task, context) {
     return `You are ForgePilot's software-engineering planner. Produce JSON only.\n\n` +
+        simpleBuildRules(task) +
         `Goal:\n${task.goal}\n\n` +
         repositorySection(context) + `\n` +
         `Git repository: ${context.git.isRepository ? "yes" : "no"}\n` +

@@ -13,6 +13,7 @@ import { createWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, rollbackWorkspa
 import { buildRuntimeHealth } from "../product/runtime-health.js";
 import { buildPatchReview } from "../repository/patch-review.js";
 import { buildDashboardConfidence } from "../quality/confidence.js";
+import { createSimpleBuildWorkspace, buildSimpleTask, SIMPLE_BUILD_DEFAULTS } from "../product/simple-build.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -60,7 +61,7 @@ function persistentJob(job) {
 }
 
 export class DashboardJobManager {
-    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null, rootWorkspace = null, maxConcurrentJobs = 1, recipeStore = null, runtimeHealthBuilder = buildRuntimeHealth } = {}) {
+    constructor({ machineConfig = null, nodePath = process.execPath, cliPath = DEFAULT_CLI, spawner = spawn, maxLogChars = 120000, ollamaUrl = null, rootWorkspace = null, maxConcurrentJobs = 1, recipeStore = null, runtimeHealthBuilder = buildRuntimeHealth, watchdogFloorMs = 30000, watchdogPollMs = 5000 } = {}) {
         this.machineConfig = machineConfig;
         this.nodePath = nodePath;
         this.cliPath = cliPath;
@@ -75,6 +76,8 @@ export class DashboardJobManager {
         this.loaded = false;
         this.recipeStore = recipeStore;
         this.runtimeHealthBuilder = runtimeHealthBuilder;
+        this.watchdogFloorMs = Math.max(1, Number(watchdogFloorMs) || 30000);
+        this.watchdogPollMs = Math.max(1, Number(watchdogPollMs) || 5000);
     }
 
     configureRoot(rootWorkspace) {
@@ -187,16 +190,27 @@ export class DashboardJobManager {
             patchReview: job.patchReview ?? null,
             confidence: job.confidence ?? null,
             runtime: job.runtime ?? null,
+            simpleBuild: Boolean(job.simpleBuild),
+            projectName: job.projectName ?? null,
+            watchdog: job.watchdog ?? null,
+            lastActivityAt: job.lastActivityAt ?? null,
             log: job.log,
             error: job.error ?? null
         };
     }
 
     append(job, text) {
+        job.lastActivityAt = new Date().toISOString();
         job.log = `${job.log}${String(text)}`.slice(-this.maxLogChars);
         const lines = job.log.split(/\r?\n/).slice(-40);
         for (const line of lines) {
-            if (line.startsWith("Plan rationale:")) job.phase = "planned";
+            if (line.startsWith("Progress:")) {
+                if (/trying .* after|failed .* trying/i.test(line)) job.phase = "model_fallback";
+                else if (/model|generating|waiting/i.test(line)) job.phase = "generating";
+                else if (/verif/i.test(line)) job.phase = "verifying";
+                else if (/action|implement|build/i.test(line)) job.phase = "building";
+            }
+            else if (line.startsWith("Plan rationale:")) job.phase = "planned";
             else if (line.startsWith("Actions:")) job.phase = "executing";
             else if (line.startsWith("Repair attempts used:")) job.phase = "repairing";
             else if (line.startsWith("JSON:")) {
@@ -206,6 +220,33 @@ export class DashboardJobManager {
                 job.markdownPath = line.slice("Report:".length).trim();
             } else if (line.startsWith("Result:")) job.phase = line.includes("PASS") ? "completed" : "failed";
         }
+    }
+
+    async createSimple({ description, workspace = null, projectName = null, retryOf = null } = {}) {
+        await this.initialize();
+        const goal = cleanText(description, 12000);
+        if (!goal) throw new Error("Describe what you want ForgePilot to build.");
+        const allocated = await createSimpleBuildWorkspace(this.rootWorkspace ?? process.cwd(), { description: goal, projectName, workspace });
+        const resolved = allocated.workspace;
+        const id = crypto.randomBytes(8).toString("hex");
+        const taskDir = path.join(resolved, ".forgepilot", "ui-tasks");
+        await fs.mkdir(taskDir, { recursive: true });
+        const taskPath = path.join(taskDir, `${id}.json`);
+        const task = buildSimpleTask({ description: goal, machineConfig: this.machineConfig ?? {}, ollamaUrl: this.ollamaUrl, jobId: id });
+        task.metadata = { ...(task.metadata ?? {}), retryOf };
+        await fs.writeFile(taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
+        const taskId = createTaskId(taskPath, task);
+        const preflight = await this.preflight({ workspace: resolved, goal });
+        const job = {
+            id, workspace: resolved, goal, effectiveGoal: goal, recipeId: null, recipeName: null, autonomy: "simple",
+            approvals: ["file_write", "command_exec"], sandbox: false, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null, completedAt: null, exitCode: null,
+            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
+            simpleBuild: true, projectName: allocated.projectName, watchdog: task.watchdog, lastActivityAt: null, log: allocated.created ? `Created project workspace: ${resolved}\n` : `Using existing project: ${resolved}\n`, child: null, error: null
+        };
+        this.jobs.set(id, job);
+        await this.persist();
+        this.drain();
+        return this.publicJob(job);
     }
 
     async create({ workspace, goal, autonomy = null, approvals = undefined, sandbox = undefined, recipeId = null, retryOf = null }) {
@@ -250,7 +291,7 @@ export class DashboardJobManager {
             autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
             completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
             preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
-            log: "", child: null, error: null
+            simpleBuild: false, projectName: null, watchdog: null, lastActivityAt: null, log: "", child: null, error: null
         };
         this.jobs.set(id, job);
         await this.persist();
@@ -357,17 +398,36 @@ export class DashboardJobManager {
             stdio: ["ignore", "pipe", "pipe"]
         });
         job.child = child;
-        child.stdout?.on("data", (chunk) => this.append(job, chunk));
-        child.stderr?.on("data", (chunk) => this.append(job, chunk));
+        const taskForWatchdog = JSON.parse(await fs.readFile(job.taskPath, "utf8")).watchdog ?? {};
+        const noProgressTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.noProgressTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.noProgressTimeoutMs : 600000)));
+        const overallTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.overallTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.overallTimeoutMs : 3600000)));
+        const childStartedAt = Date.now();
+        let lastActivityAt = Date.now();
+        let watchdogReason = null;
+        const touch = (chunk) => { lastActivityAt = Date.now(); this.append(job, chunk); };
+        child.stdout?.on("data", touch);
+        child.stderr?.on("data", touch);
         child.on("error", (error) => {
             job.error = error.message;
-            this.append(job, `\nForgePilot launcher error: ${error.message}\n`);
+            touch(`\nForgePilot launcher error: ${error.message}\n`);
         });
+        const watchdogTimer = setInterval(() => {
+            const now = Date.now();
+            if (!watchdogReason && now - childStartedAt > overallTimeoutMs) watchdogReason = `Overall job limit reached (${Math.round(overallTimeoutMs / 60000)} minutes).`;
+            if (!watchdogReason && now - lastActivityAt > noProgressTimeoutMs) watchdogReason = `No useful process output for ${Math.round(noProgressTimeoutMs / 60000)} minutes.`;
+            if (watchdogReason) {
+                this.append(job, `\nWATCHDOG STOP: ${watchdogReason} ForgePilot stopped the job instead of leaving it running indefinitely.\n`);
+                try { child.kill("SIGKILL"); } catch { /* best effort */ }
+            }
+        }, this.watchdogPollMs);
+        watchdogTimer.unref?.();
         await new Promise((resolve) => child.on("close", (code) => { job.exitCode = code ?? -1; resolve(); }));
+        clearInterval(watchdogTimer);
+        if (watchdogReason) job.error = watchdogReason;
         job.child = null;
         job.completedAt = new Date().toISOString();
         const wasCancelling = job.phase === "cancelling";
-        let finalStatus = wasCancelling ? "cancelled" : (job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail");
+        let finalStatus = wasCancelling ? "cancelled" : (job.error && /job limit|No useful process output/i.test(job.error) ? "fail" : (job.exitCode === 0 && /Result:\s*PASS/.test(job.log) ? "pass" : "fail"));
         job.phase = "finalizing";
         if (!job.reportPath) {
             const match = job.log.match(/^JSON:\s*(.+)$/m);
@@ -418,7 +478,7 @@ export class DashboardJobManager {
             if (finalStatus === "pass") finalStatus = "fail";
         }
         job.status = finalStatus;
-        job.phase = finalStatus === "pass" ? "completed" : finalStatus === "cancelled" ? "cancelled" : "failed";
+        job.phase = finalStatus === "pass" ? "completed" : finalStatus === "cancelled" ? "cancelled" : (job.error && /job limit|No useful process output/i.test(job.error) ? "watchdog_stopped" : "failed");
         await this.persist();
         this.drain();
     }
@@ -445,6 +505,7 @@ export class DashboardJobManager {
     async retry(id) {
         const job = this.jobs.get(String(id));
         if (!job || ["queued", "running", "paused"].includes(job.status)) return null;
+        if (job.simpleBuild) return this.createSimple({ description: job.goal, workspace: job.workspace, projectName: job.projectName, retryOf: job.id });
         return this.create({
             workspace: job.workspace,
             goal: job.goal,

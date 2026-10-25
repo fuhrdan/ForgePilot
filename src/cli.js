@@ -23,13 +23,14 @@ import { RecoveryJournal, listRecoveryJournals } from "./product/recovery.js";
 import { signReport, verifyReportProvenance } from "./security/provenance.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
-import { launchForgePilot } from "./product/launcher.js";
+import { launchForgePilot, defaultWorkspace } from "./product/launcher.js";
+import { createSimpleBuildWorkspace, buildSimpleTask, SIMPLE_BUILD_DEFAULTS } from "./product/simple-build.js";
 import { runSelfTest } from "./product/runtime-health.js";
 import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 import { buildEvidenceConfidence } from "./quality/confidence.js";
 
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -39,6 +40,7 @@ function usage() {
 `  forgepilot setup [--json]\n` +
 `  forgepilot health [workspace] [--json]\n` +
 `  forgepilot launch [workspace] [--port N] [--no-browser]\n` +
+`  forgepilot build <description> [--workspace PATH] [--project-name NAME] [--model MODEL]\n` +
 `  forgepilot profile [auto|low-resource|balanced|high-quality]\n` +
 `  forgepilot recover [workspace]\n` +
 `  forgepilot dashboard [workspace] [--port N]\n` +
@@ -52,7 +54,10 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Evidence confidence + patch review (v0.15):\n` +
+`Just Build It (v0.16):\n` +
+`  build accepts a plain-language description, creates a project automatically when --workspace is omitted, and uses bounded watchdogs.\n` +
+`  The one-click dashboard defaults to the same single-agent build path; advanced controls are optional.\n\n` +
+`Evidence confidence + patch review (v0.15+):\n` +
 `  assess explains ForgePilot's deterministic evidence-quality score; the dashboard augments it with signed provenance, risk, checkpoint, and patch metadata.\n` +
 `  Confidence is not a probability of correctness; it is an auditable summary of available verification evidence.\n\n` +
 `Adaptive runtime health (v0.14+):\n` +
@@ -136,7 +141,9 @@ function buildPlanner(plannerName, task, options) {
         return new OllamaPlanner({
             model: options.model ?? task.model ?? "qwen2.5-coder:7b",
             baseUrl: options["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434",
-            fallbackModels: task.modelFallbacks ?? []
+            fallbackModels: task.modelFallbacks ?? [],
+            generationTimeoutMs: Number(options["model-timeout-ms"] ?? task.watchdog?.modelTimeoutMs ?? SIMPLE_BUILD_DEFAULTS.modelTimeoutMs),
+            onProgress: ({ message }) => console.log(`Progress: ${message}`)
         });
     }
     if (plannerName === "scripted") return new ScriptedPlanner();
@@ -214,11 +221,12 @@ async function runTask(taskFile, options) {
         const baseUrl = effectiveOptions["ollama-url"] ?? task.ollamaUrl ?? "http://127.0.0.1:11434";
         const fallbackModel = effectiveOptions.model ?? task.model ?? "qwen2.5-coder:7b";
         const modelFor = (role, optionName) => effectiveOptions[optionName] ?? roleModels[role] ?? fallbackModel;
-        roleAdapters.planner = new OllamaPlanner({ model: modelFor("planner", "model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
-        roleAdapters.implementer = new OllamaPlanner({ model: modelFor("implementer", "implementer-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
-        roleAdapters.debugger = new OllamaPlanner({ model: modelFor("debugger", "debugger-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
-        roleAdapters.reviewer = new OllamaPlanner({ model: modelFor("reviewer", "reviewer-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
-        roleAdapters.verifier = new OllamaPlanner({ model: modelFor("verifier", "verifier-model"), baseUrl, fallbackModels: task.modelFallbacks ?? [] });
+        const rolePlanner = (model) => new OllamaPlanner({ model, baseUrl, fallbackModels: task.modelFallbacks ?? [], generationTimeoutMs: Number(task.watchdog?.modelTimeoutMs ?? SIMPLE_BUILD_DEFAULTS.modelTimeoutMs), onProgress: ({ message }) => console.log(`Progress: ${message}`) });
+        roleAdapters.planner = rolePlanner(modelFor("planner", "model"));
+        roleAdapters.implementer = rolePlanner(modelFor("implementer", "implementer-model"));
+        roleAdapters.debugger = rolePlanner(modelFor("debugger", "debugger-model"));
+        roleAdapters.reviewer = rolePlanner(modelFor("reviewer", "reviewer-model"));
+        roleAdapters.verifier = rolePlanner(modelFor("verifier", "verifier-model"));
     }
     const agentTeam = new AgentTeam({
         adapter: planner,
@@ -319,7 +327,8 @@ async function runTask(taskFile, options) {
             agentTeam,
             computerSession,
             approvalManager,
-            secretStore
+            secretStore,
+            onProgress: (message) => console.log(`Progress: ${message}`)
         });
 
         console.log(`Plan rationale: ${outcome.plan.rationale ?? "(none)"}`);
@@ -622,6 +631,26 @@ async function dashboardCommand(workspaceArg, options) {
     console.log(`Open: http://${dashboard.host}:${dashboard.port}/`);
 }
 
+async function simpleBuildCommand(description, options = {}) {
+    const text = String(description ?? "").trim();
+    if (!text) throw new Error("build requires a plain-language description.");
+    const root = await defaultWorkspace();
+    await fs.mkdir(root, { recursive: true });
+    const allocated = await createSimpleBuildWorkspace(root, { description: text, projectName: options["project-name"], workspace: options.workspace });
+    const machineConfig = (await loadMachineConfig().catch(() => null)) ?? {};
+    const task = buildSimpleTask({ description: text, machineConfig, ollamaUrl: options["ollama-url"] });
+    if (options.model) task.model = options.model;
+    const taskDir = path.join(allocated.workspace, ".forgepilot", "ui-tasks");
+    await fs.mkdir(taskDir, { recursive: true });
+    const taskPath = path.join(taskDir, `just-build-${Date.now()}.json`);
+    await fs.writeFile(taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
+    console.log(`ForgePilot v${VERSION} — Just Build It`);
+    console.log(`Project: ${allocated.workspace}`);
+    console.log(`Description: ${text}`);
+    console.log(`Watchdogs: model ${Math.round(task.watchdog.modelTimeoutMs / 1000)}s, no-progress ${Math.round(task.watchdog.noProgressTimeoutMs / 60000)}m, overall ${Math.round(task.watchdog.overallTimeoutMs / 60000)}m`);
+    return runTask(taskPath, { ...options, workspace: allocated.workspace, planner: "ollama", apply: true, approve: "file_write,command_exec", "no-agents": true, "max-repairs": task.maxRepairs });
+}
+
 async function main() {
     const [command, ...rest] = process.argv.slice(2);
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
@@ -632,6 +661,11 @@ async function main() {
     if (command === "launch") { const { options, positionals } = parseOptions(rest); return launchCommand(positionals[0], options); }
     if (command === "profile") return profileCommand(rest[0] ?? "auto");
     if (command === "recover") return recoverCommand(rest[0] ?? ".");
+
+    if (command === "build") {
+        const { options, positionals } = parseOptions(rest);
+        return simpleBuildCommand(positionals.join(" "), options);
+    }
 
     if (command === "init") {
         const workspace = rest[0];

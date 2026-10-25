@@ -176,7 +176,7 @@ $shortcut.Save()
 
 Write-Host "[7/7] Verifying installation..."
 $version = (& $node (Join-Path $InstallDir "src\cli.js") --version).Trim()
-if ($version -ne "0.15.0") { throw "Installed ForgePilot version check failed: $version" }
+if ($version -ne "0.16.0") { throw "Installed ForgePilot version check failed: $version" }
 Write-Host "Running local health/self-test..."
 & $node (Join-Path $InstallDir "src\cli.js") health $Workspace | Tee-Object -FilePath (Join-Path $LogDir "health.txt") | Out-Host
 if ($LASTEXITCODE -ne 0) { Write-Warning "ForgePilot installed, but the health check reports insufficient current resources. Close other applications and run ForgePilot again." }

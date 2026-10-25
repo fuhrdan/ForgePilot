@@ -82,7 +82,7 @@ export async function verifyPlan(plan, workspace, {
                 args,
                 env,
                 cwd,
-                timeoutMs: Number(check.timeoutMs ?? 120000)
+                timeoutMs: Number(check.timeoutMs ?? 300000)
             });
             const result = secretStore ? secretStore.redactObject(resultRaw) : resultRaw;
             const expectedExit = Number(check.expectExitCode ?? 0);
