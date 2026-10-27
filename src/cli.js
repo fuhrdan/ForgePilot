@@ -24,13 +24,14 @@ import { signReport, verifyReportProvenance } from "./security/provenance.js";
 import { createDashboardServer } from "./dashboard/server.js";
 import { inspectSystem, recommendMachinePlan, saveMachineConfig, loadMachineConfig, writeLauncherEnvironment, machineConfigPath } from "./product/system-inspector.js";
 import { launchForgePilot, defaultWorkspace } from "./product/launcher.js";
-import { createSimpleBuildWorkspace, buildSimpleTask, SIMPLE_BUILD_DEFAULTS } from "./product/simple-build.js";
+import { createSimpleBuildWorkspace, SIMPLE_BUILD_DEFAULTS } from "./product/simple-build.js";
+import { classifyUniversalIntent, resolveUniversalWorkspace, buildUniversalTask } from "./product/universal-prompt.js";
 import { runSelfTest } from "./product/runtime-health.js";
 import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 import { buildEvidenceConfidence } from "./quality/confidence.js";
 
-const VERSION = "0.16.0";
+const VERSION = "0.17.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -40,7 +41,8 @@ function usage() {
 `  forgepilot setup [--json]\n` +
 `  forgepilot health [workspace] [--json]\n` +
 `  forgepilot launch [workspace] [--port N] [--no-browser]\n` +
-`  forgepilot build <description> [--workspace PATH] [--project-name NAME] [--model MODEL]\n` +
+`  forgepilot prompt <request> [--workspace PATH] [--model MODEL]\n` +
+`  forgepilot build <request> [--workspace PATH] [--model MODEL]\n` +
 `  forgepilot profile [auto|low-resource|balanced|high-quality]\n` +
 `  forgepilot recover [workspace]\n` +
 `  forgepilot dashboard [workspace] [--port N]\n` +
@@ -54,9 +56,9 @@ function usage() {
 `  forgepilot compare-images <actual.png> <baseline.png> [--channel-threshold N] [--max-changed-ratio N]\n\n` +
 `Repository intelligence:\n` +
 `  analyze detects ecosystems/frameworks, build/test hints, and the files selected for AI context.\n\n` +
-`Just Build It (v0.16):\n` +
-`  build accepts a plain-language description, creates a project automatically when --workspace is omitted, and uses bounded watchdogs.\n` +
-`  The one-click dashboard defaults to the same single-agent build path; advanced controls are optional.\n\n` +
+`Universal Prompt (v0.17):\n` +
+`  build/prompt accepts one plain-language request for new projects, existing-repo fixes, reviews, tests, releases, or UI work.\n` +
+`  Put an existing project path directly in the prompt; otherwise ForgePilot creates a project automatically.\n\n` +
 `Evidence confidence + patch review (v0.15+):\n` +
 `  assess explains ForgePilot's deterministic evidence-quality score; the dashboard augments it with signed provenance, risk, checkpoint, and patch metadata.\n` +
 `  Confidence is not a probability of correctness; it is an auditable summary of available verification evidence.\n\n` +
@@ -631,24 +633,31 @@ async function dashboardCommand(workspaceArg, options) {
     console.log(`Open: http://${dashboard.host}:${dashboard.port}/`);
 }
 
-async function simpleBuildCommand(description, options = {}) {
+async function universalPromptCommand(description, options = {}) {
     const text = String(description ?? "").trim();
-    if (!text) throw new Error("build requires a plain-language description.");
+    if (!text) throw new Error("prompt requires a plain-language request.");
     const root = await defaultWorkspace();
     await fs.mkdir(root, { recursive: true });
-    const allocated = await createSimpleBuildWorkspace(root, { description: text, projectName: options["project-name"], workspace: options.workspace });
+    const allocated = options.workspace
+        ? await createSimpleBuildWorkspace(root, { description: text, workspace: options.workspace })
+        : options["project-name"]
+            ? await createSimpleBuildWorkspace(root, { description: text, projectName: options["project-name"] })
+            : await resolveUniversalWorkspace(root, text, { cwd: process.cwd() });
     const machineConfig = (await loadMachineConfig().catch(() => null)) ?? {};
-    const task = buildSimpleTask({ description: text, machineConfig, ollamaUrl: options["ollama-url"] });
+    const inferred = classifyUniversalIntent(text);
+    const task = buildUniversalTask({ prompt: text, machineConfig, ollamaUrl: options["ollama-url"], intent: inferred });
     if (options.model) task.model = options.model;
     const taskDir = path.join(allocated.workspace, ".forgepilot", "ui-tasks");
     await fs.mkdir(taskDir, { recursive: true });
-    const taskPath = path.join(taskDir, `just-build-${Date.now()}.json`);
+    const taskPath = path.join(taskDir, `universal-${Date.now()}.json`);
     await fs.writeFile(taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
-    console.log(`ForgePilot v${VERSION} — Just Build It`);
-    console.log(`Project: ${allocated.workspace}`);
-    console.log(`Description: ${text}`);
+    console.log(`ForgePilot v${VERSION} — Universal Prompt`);
+    console.log(`Workspace: ${allocated.workspace}`);
+    console.log(`Intent: ${inferred.intent}`);
+    console.log(`Capabilities: ${inferred.approvals.join(", ") || "read-only"}`);
+    console.log(`Request: ${text}`);
     console.log(`Watchdogs: model ${Math.round(task.watchdog.modelTimeoutMs / 1000)}s, no-progress ${Math.round(task.watchdog.noProgressTimeoutMs / 60000)}m, overall ${Math.round(task.watchdog.overallTimeoutMs / 60000)}m`);
-    return runTask(taskPath, { ...options, workspace: allocated.workspace, planner: "ollama", apply: true, approve: "file_write,command_exec", "no-agents": true, "max-repairs": task.maxRepairs });
+    return runTask(taskPath, { ...options, workspace: allocated.workspace, planner: "ollama", apply: true, approve: inferred.approvals.join(","), "no-agents": true, "max-repairs": task.maxRepairs });
 }
 
 async function main() {
@@ -662,9 +671,9 @@ async function main() {
     if (command === "profile") return profileCommand(rest[0] ?? "auto");
     if (command === "recover") return recoverCommand(rest[0] ?? ".");
 
-    if (command === "build") {
+    if (command === "build" || command === "prompt") {
         const { options, positionals } = parseOptions(rest);
-        return simpleBuildCommand(positionals.join(" "), options);
+        return universalPromptCommand(positionals.join(" "), options);
     }
 
     if (command === "init") {

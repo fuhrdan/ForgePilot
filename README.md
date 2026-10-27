@@ -1,60 +1,59 @@
-# ForgePilot v0.16.0
+# ForgePilot v0.17.0
 
-**A local-first verified software-engineering agent with one-click Windows setup, automatic low-resource tuning, and a persistent browser-based project/recipe/task-queue control center with reversible workspace safety.**
+**A local-first verified software-engineering agent with one-click Windows setup, adaptive low-resource operation, and one universal natural-language prompt.**
 
-ForgePilot v0.16 makes **Just Build It** the default experience: type a plain-language description, click BUILD IT, and ForgePilot creates or uses a project, builds it with one local coding agent, verifies it, and stops within explicit watchdog limits. The advanced repository intelligence, test-first engineering, bounded repair, sandboxing, visual verification, multi-agent review, signed provenance, rollback, evidence confidence, and patch review remain available behind the advanced controls.
+ForgePilot v0.17 removes the separate project/recipe/build/review screens from the normal UI. The browser control center now presents one prompt box: describe what you want done, including an existing project path when relevant, and ForgePilot infers whether to create a new project, modify/fix an existing repository, run verification, perform a read-only review, package/release, or use UI/browser control.
 
 ## Windows: one-click install and run
 
 1. Extract the release ZIP.
 2. Double-click **`INSTALL_FORGEPILOT.cmd`** once.
-3. When installation finishes, double-click the new **ForgePilot** shortcut on the Desktop.
+3. Double-click the **ForgePilot** Desktop shortcut for normal use.
 
-The installer copies ForgePilot to `%LOCALAPPDATA%\ForgePilot`, creates `Documents\ForgePilot Workspace`, inspects RAM/available RAM, CPU count, GPU/VRAM, free disk, and installed developer tools, then writes a persistent machine profile. It attempts to bootstrap Node.js 22+, Git, and Ollama through `winget` when needed; Node also has a portable nodejs.org ZIP fallback when `winget` is unavailable. Ollama/model setup is best-effort: ForgePilot remains installed if an optional AI download cannot complete.
+The v0.14+ adaptive resource governor remains intact: ForgePilot inspects RAM/available RAM, CPU, GPU/VRAM, disk, tools, and local Ollama models, then selects a conservative model/context/repair plan. Under pressure it can downgrade to smaller installed models; it never silently scales above the configured plan.
 
-The one-click launcher applies low-resource-safe Ollama limits only to the ForgePilot process, starts Ollama when available, starts the loopback-only dashboard on a free local port, and opens it in the default browser. Close the launcher window to stop the dashboard.
+## v0.17 Universal Prompt
 
-Low-resource examples:
-
-- Very small machine: 1.5B coding model, ~1.5K context, no vision model, multi-agent mode off.
-- Modest machine: 3B coding model, ~2.3K context, no vision model, one loaded Ollama model.
-- Balanced machine: 7B coding model by default; 14B only when RAM/VRAM is sufficient.
-
-The automatic bootstrap model is capped at 7B even on large systems so a first install does not silently trigger a huge download.
-
-## v0.16 Just Build It
-
-The default dashboard now starts with one large prompt:
+The default UI is intentionally one screen and one entry field:
 
 ```text
-What do you want ForgePilot to build?
-[ describe the finished software ]
+ForgePilot
 
-[ BUILD IT ]
+What do you want ForgePilot to build, fix, review, test, or run?
+[ one natural-language prompt ]
+
+[ DO IT ]
 ```
 
-A repository is optional. If the existing-project field is blank, ForgePilot creates a new project automatically under `ForgePilot Workspace/Projects/`. Simple Build Mode uses one coding agent by default, grants only local file-write and command execution capabilities, and keeps computer control, external network, secrets, and sandbox networking denied.
+Examples:
 
-Hard watchdogs prevent the silent multi-hour stall that motivated v0.16:
+```text
+Build a C# desktop app that finds duplicate files and includes a Windows launcher.
 
-- local model response: **120 seconds** before abort/fallback;
-- individual build/test command: **5 minutes** maximum by default;
-- no useful child-process output: **5 minutes** before the dashboard stops the job;
-- overall simple-build job: **30 minutes** maximum;
-- repairs: at most **2** in Simple Build Mode.
+Fix the login retry bug in C:\Projects\MyApp and add a regression test.
 
-Ollama requests emit progress heartbeats while the model is generating. If a model times out or returns a retryable local-runtime error, ForgePilot automatically tries the configured smaller fallback model. The dashboard exposes plain-language phases such as `Generating implementation`, `Building`, `Repairing failure`, `Verifying`, and `Stopped by watchdog`.
+Review C:\Projects\OpsForge for reliability problems.
 
-Advanced users can still expand **Advanced engineering controls** for saved projects, recipes, sandboxing, capability grants, repository analysis, deeper multi-agent review, visual verification, and the rest of the existing ForgePilot stack.
+Run the tests in C:\Projects\AnchorWeight and fix any failures.
+```
+
+If the prompt contains an existing path, ForgePilot uses that workspace. If no existing path is supplied, it creates a new project automatically under `ForgePilot Workspace/Projects/`. Paths containing spaces can be quoted.
+
+The prompt router infers a conservative capability set. Read-only reviews receive no mutation/command grants; verification-only requests receive command execution; build/fix requests receive local file-write + command execution; computer/network/secrets capabilities are granted only when the prompt explicitly implies them. The underlying task still marks all sensitive capability categories as approval-gated, so unexpected escalation fails closed.
+
+The v0.16 watchdog behavior remains: 2-minute model response limit, 5-minute no-progress stop, 30-minute overall simple/universal-job ceiling, bounded repairs, visible progress heartbeats, and smaller-model fallback. Multi-agent orchestration remains off on the default path for low-resource reliability.
 
 CLI equivalent:
 
 ```powershell
-forgepilot build "Build a Java desktop app that monitors CPU and RAM and shows live graphs"
+forgepilot prompt "Fix the retry bug in C:\Projects\MyApp and add a test"
 ```
 
-Use `--workspace PATH` to apply the same simple flow to an existing project.
+`forgepilot build` remains an alias for backward compatibility.
 
+## v0.16 Just Build It
+
+v0.16 introduced description-first automatic project creation, one-agent default execution, hard model/no-progress/overall watchdogs, visible progress, and bounded model fallback. v0.17 keeps that execution model but generalizes the single prompt beyond only building new software.
 
 ## v0.15 evidence confidence and patch review
 

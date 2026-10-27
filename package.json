@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.16.0",
-  "description": "Local-first verified software engineering agent with one-click Windows install/run, Just Build It natural-language builds, hard model/no-progress/job watchdogs, automatic project creation, adaptive low-resource model fallback, reversible checkpoints, signed provenance, evidence confidence, patch review, and advanced test-first/sandbox/multi-agent/computer-control workflows.",
+  "version": "0.17.0",
+  "description": "Local-first verified software engineering agent with one-click Windows install/run, one universal natural-language prompt, adaptive low-resource model fallback, hard watchdogs, reversible checkpoints, signed provenance, and advanced verified engineering workflows.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

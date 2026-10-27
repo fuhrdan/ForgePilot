@@ -14,6 +14,7 @@ import { buildRuntimeHealth } from "../product/runtime-health.js";
 import { buildPatchReview } from "../repository/patch-review.js";
 import { buildDashboardConfidence } from "../quality/confidence.js";
 import { createSimpleBuildWorkspace, buildSimpleTask, SIMPLE_BUILD_DEFAULTS } from "../product/simple-build.js";
+import { classifyUniversalIntent, resolveUniversalWorkspace, buildUniversalTask } from "../product/universal-prompt.js";
 
 const DEFAULT_CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const AUTONOMY = Object.freeze({
@@ -191,6 +192,8 @@ export class DashboardJobManager {
             confidence: job.confidence ?? null,
             runtime: job.runtime ?? null,
             simpleBuild: Boolean(job.simpleBuild),
+            universalPrompt: Boolean(job.universalPrompt),
+            intent: job.intent ?? null,
             projectName: job.projectName ?? null,
             watchdog: job.watchdog ?? null,
             lastActivityAt: job.lastActivityAt ?? null,
@@ -220,6 +223,38 @@ export class DashboardJobManager {
                 job.markdownPath = line.slice("Report:".length).trim();
             } else if (line.startsWith("Result:")) job.phase = line.includes("PASS") ? "completed" : "failed";
         }
+    }
+
+
+    async createUniversal({ prompt, workspace = null, retryOf = null } = {}) {
+        await this.initialize();
+        const goal = cleanText(prompt, 12000);
+        if (!goal) throw new Error("Tell ForgePilot what you want it to do.");
+        const inferred = classifyUniversalIntent(goal);
+        const allocated = workspace
+            ? await createSimpleBuildWorkspace(this.rootWorkspace ?? process.cwd(), { description: goal, workspace })
+            : await resolveUniversalWorkspace(this.rootWorkspace ?? process.cwd(), goal, { cwd: this.rootWorkspace ?? process.cwd() });
+        const resolved = allocated.workspace;
+        const id = crypto.randomBytes(8).toString("hex");
+        const taskDir = path.join(resolved, ".forgepilot", "ui-tasks");
+        await fs.mkdir(taskDir, { recursive: true });
+        const taskPath = path.join(taskDir, `${id}.json`);
+        const task = buildUniversalTask({ prompt: goal, machineConfig: this.machineConfig ?? {}, ollamaUrl: this.ollamaUrl, jobId: id, intent: inferred });
+        task.metadata = { ...(task.metadata ?? {}), retryOf };
+        await fs.writeFile(taskPath, JSON.stringify(task, null, 2) + "\n", "utf8");
+        const taskId = createTaskId(taskPath, task);
+        const preflight = await this.preflight({ workspace: resolved, goal });
+        const job = {
+            id, workspace: resolved, goal, effectiveGoal: goal, recipeId: null, recipeName: null, autonomy: "universal",
+            approvals: inferred.approvals, sandbox: false, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null, completedAt: null, exitCode: null,
+            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
+            simpleBuild: true, universalPrompt: true, intent: inferred.intent, projectName: allocated.projectName, watchdog: task.watchdog, lastActivityAt: null,
+            log: `${allocated.created ? "Created" : "Using"} workspace: ${resolved}\nInferred intent: ${inferred.intent}\nCapabilities: ${inferred.approvals.join(", ") || "read-only"}\n`, child: null, error: null
+        };
+        this.jobs.set(id, job);
+        await this.persist();
+        this.drain();
+        return this.publicJob(job);
     }
 
     async createSimple({ description, workspace = null, projectName = null, retryOf = null } = {}) {
@@ -398,19 +433,23 @@ export class DashboardJobManager {
             stdio: ["ignore", "pipe", "pipe"]
         });
         job.child = child;
-        const taskForWatchdog = JSON.parse(await fs.readFile(job.taskPath, "utf8")).watchdog ?? {};
-        const noProgressTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.noProgressTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.noProgressTimeoutMs : 600000)));
-        const overallTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.overallTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.overallTimeoutMs : 3600000)));
         const childStartedAt = Date.now();
         let lastActivityAt = Date.now();
         let watchdogReason = null;
         const touch = (chunk) => { lastActivityAt = Date.now(); this.append(job, chunk); };
+        // Attach all child listeners before the next await. Tiny build/test commands can
+        // emit output and exit immediately; losing either event used to leave the UI
+        // stuck or incorrectly mark a successful job as failed.
+        const closePromise = new Promise((resolve) => child.once("close", (code) => resolve(code ?? -1)));
         child.stdout?.on("data", touch);
         child.stderr?.on("data", touch);
         child.on("error", (error) => {
             job.error = error.message;
             touch(`\nForgePilot launcher error: ${error.message}\n`);
         });
+        const taskForWatchdog = JSON.parse(await fs.readFile(job.taskPath, "utf8")).watchdog ?? {};
+        const noProgressTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.noProgressTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.noProgressTimeoutMs : 600000)));
+        const overallTimeoutMs = Math.max(this.watchdogFloorMs, Number(taskForWatchdog.overallTimeoutMs ?? (job.simpleBuild ? SIMPLE_BUILD_DEFAULTS.overallTimeoutMs : 3600000)));
         const watchdogTimer = setInterval(() => {
             const now = Date.now();
             if (!watchdogReason && now - childStartedAt > overallTimeoutMs) watchdogReason = `Overall job limit reached (${Math.round(overallTimeoutMs / 60000)} minutes).`;
@@ -421,7 +460,7 @@ export class DashboardJobManager {
             }
         }, this.watchdogPollMs);
         watchdogTimer.unref?.();
-        await new Promise((resolve) => child.on("close", (code) => { job.exitCode = code ?? -1; resolve(); }));
+        job.exitCode = await closePromise;
         clearInterval(watchdogTimer);
         if (watchdogReason) job.error = watchdogReason;
         job.child = null;
@@ -505,6 +544,7 @@ export class DashboardJobManager {
     async retry(id) {
         const job = this.jobs.get(String(id));
         if (!job || ["queued", "running", "paused"].includes(job.status)) return null;
+        if (job.universalPrompt) return this.createUniversal({ prompt: job.goal, workspace: job.workspace, retryOf: job.id });
         if (job.simpleBuild) return this.createSimple({ description: job.goal, workspace: job.workspace, projectName: job.projectName, retryOf: job.id });
         return this.create({
             workspace: job.workspace,

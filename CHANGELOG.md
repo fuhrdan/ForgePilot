@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.17.0 — Universal Prompt
+
+- Replaces the normal multi-screen dashboard workflow with one visible natural-language prompt and one **DO IT** button.
+- Adds universal intent inference for new-project builds, existing-repository fixes/features, verification-only tasks, read-only review/analyze requests, release/package work, UI/browser interaction, explicit network work, and secret-backed tasks.
+- Detects an existing project path embedded directly in the prompt; otherwise allocates a new project automatically.
+- Infers the minimum capability grants while keeping all sensitive capability categories approval-gated so unexpected escalation fails closed.
+- Keeps the default path single-agent and low-resource friendly with the v0.16 model/no-progress/overall watchdogs and v0.14 adaptive model fallback.
+- Adds `/api/prompt` and `forgepilot prompt <request>`; `forgepilot build` remains a backward-compatible alias.
+- Keeps retries in the same workspace rather than accidentally allocating a second project.
+- Fixes a fast-child monitoring race by attaching stdout/stderr/close listeners before any asynchronous post-spawn work.
+- Retains one-click Windows install/run and all advanced v0.1-v0.16 APIs under the hood without exposing them as separate normal-use screens.
+- Adds 7 universal-prompt regression tests plus existing queue/fast-process tests covering the spawn-listener race.
+
+
 ## 0.16.0 — Just Build It
 
 - Makes a single plain-language **BUILD IT** prompt the default dashboard workflow; project/repository setup is optional.

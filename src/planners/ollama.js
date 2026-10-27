@@ -201,10 +201,16 @@ function buildImplementationPrompt(task, context, strategy) {
 
 function simpleBuildRules(task) {
     if (!task?.simpleBuild) return "";
-    return `Simple Build Mode:\n` +
-        `- The user supplied only a desired outcome. Make reasonable implementation decisions without asking follow-up questions.\n` +
-        `- If the workspace is empty, create a complete runnable project rather than a fragment.\n` +
-        `- Prefer standard-library / already-installed tooling and avoid dependency downloads unless the task explicitly requires them.\n` +
+    const intent = task?.metadata?.inferredIntent ?? "build";
+    const universal = task?.universalPrompt ? `Universal Prompt intent: ${intent}.\n` : "";
+    const readOnly = intent === "review" ? `- This is a read-only review/analyze request. Do not write files or run commands. Use repository context and place useful findings in rationale. Keep actions empty.\n` : "";
+    const verifyOnly = intent === "verify" ? `- This is a verification request. Prefer running existing build/test/lint commands; do not modify files unless the user's prompt explicitly asks to fix failures.\n` : "";
+    return `Simple / Universal Mode:\n` + universal +
+        `- Treat the user's single prompt as the complete request. Make reasonable decisions without asking follow-up questions.\n` +
+        readOnly + verifyOnly +
+        `- If the workspace is empty and the request is to create/build something, create a complete runnable project rather than a fragment.\n` +
+        `- If the workspace already contains a project, preserve its conventions and make the smallest appropriate change.\n` +
+        `- Prefer standard-library / already-installed tooling and avoid dependency downloads unless the prompt explicitly requires them.\n` +
         `- Include practical run instructions or a simple launcher when appropriate for the requested platform.\n` +
         `- Verification should actually compile/run/test the finished program where possible.\n` +
         `- Keep the solution small enough for a local low-resource machine to build and verify.\n\n`;
