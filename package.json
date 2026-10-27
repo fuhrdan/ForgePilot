@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.17.0",
-  "description": "Local-first verified software engineering agent with one-click Windows install/run, one universal natural-language prompt, adaptive low-resource model fallback, hard watchdogs, reversible checkpoints, signed provenance, and advanced verified engineering workflows.",
+  "version": "0.18.0",
+  "description": "Local-first verified software engineering agent with one universal prompt, one-click Windows install/run, adaptive low-resource operation, hard watchdogs, signed provenance, and reversible verified changes.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"
@@ -9,10 +9,32 @@
   "scripts": {
     "start": "node ./src/cli.js",
     "test": "node --test",
-    "doctor": "node ./src/cli.js doctor"
+    "doctor": "node ./src/cli.js doctor",
+    "check": "node ./scripts/release-check.mjs",
+    "release:check": "node ./scripts/release-check.mjs"
   },
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/fuhrdan/ForgePilot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fuhrdan/ForgePilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fuhrdan/ForgePilot/issues"
+  },
+  "author": "Dan Fuhr",
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "software-engineering",
+    "ollama",
+    "local-ai",
+    "developer-tools",
+    "windows",
+    "automation",
+    "verification"
+  ]
 }

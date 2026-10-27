@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.18.0 — GitHub Release Readiness
+
+- Cleans up the repository into a conventional open-source project layout while preserving the one-prompt product experience.
+- Rewrites the README as a concise GitHub landing page with CI/release/license badges, one-click Windows quick start, feature summary, development instructions, and links to deeper docs.
+- Adds Windows + Linux GitHub Actions CI.
+- Adds tag-driven GitHub Release automation for `vX.Y.Z` tags.
+- Adds a reproducible Windows release packager that creates `ForgePilot-vX.Y.Z-windows.zip` and a SHA-256 checksum.
+- Adds `npm run check` / `scripts/release-check.mjs` to enforce version consistency and required release metadata.
+- Adds contributing, security, support, conduct, issue forms, and pull-request guidance.
+- Adds `.editorconfig` and `.gitattributes` so Windows launcher scripts stay CRLF while source/docs remain normalized.
+- Adds release-process and installation documentation plus v0.18.0 GitHub release notes.
+- Keeps one-click install/run, universal prompt, adaptive low-resource execution, watchdogs, signed provenance, evidence confidence, and reversible checkpoints unchanged.
+
 ## 0.17.0 — Universal Prompt
 
 - Replaces the normal multi-screen dashboard workflow with one visible natural-language prompt and one **DO IT** button.
@@ -27,7 +40,7 @@
 - Preserves one-click Windows install/run, adaptive low-resource tuning, signed provenance, reversible checkpoints/rollback, evidence confidence, and all advanced v0.1-v0.15 workflows.
 - Adds 8 regression tests covering automatic project creation, single-agent task policy, model timeout/fallback, silent-child watchdog termination, progress phases, and the token-protected Just Build It API/UI.
 
-## 0.16.0 — Evidence Confidence + Verified Patch Review
+## 0.15.0 — Evidence Confidence + Verified Patch Review
 
 - Adds a deterministic 0–100 evidence-confidence score to every signed run report; the score explicitly states that it is not a probability of correctness.
 - Scores deterministic verification, test-first evidence, Git scope, independent Verifier approval, visual checks, coverage, and repair count with transparent reasons and evidence gaps.

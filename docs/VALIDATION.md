@@ -19,7 +19,7 @@ The v0.17 additions verify:
 
 1. `npm test` passes the complete suite (**140 tests**).
 2. Every JavaScript file passes `node --check`.
-3. `node src/cli.js --version` returns `0.17.0`.
+3. `node src/cli.js --version` returns `0.18.0`.
 4. A token-protected dashboard Universal Prompt request with no repository creates and completes a project through an Ollama-compatible endpoint.
 5. A Universal Prompt containing an existing repository path uses that repository rather than allocating another project.
 6. The same acceptance works from the extracted final ZIP.

@@ -31,7 +31,7 @@ import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 import { buildEvidenceConfidence } from "./quality/confidence.js";
 
-const VERSION = "0.17.0";
+const VERSION = "0.18.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +

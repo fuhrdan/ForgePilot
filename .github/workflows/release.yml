@@ -1,0 +1,62 @@
+name: GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v7
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Verify tag matches package version
+        shell: powershell
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expected = "v$version"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag ${{ github.ref_name }} does not match package version $expected."
+          }
+
+      - name: Repository readiness
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Package one-click Windows release
+        shell: powershell
+        run: .\scripts\package-release.ps1 -SkipTests
+
+      - name: Verify checksum
+        shell: powershell
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $zip = "dist\ForgePilot-v$version-windows.zip"
+          $expected = (Get-Content "$zip.sha256" -Raw).Split()[0].Trim().ToLowerInvariant()
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "SHA-256 mismatch." }
+
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $zip = "dist\ForgePilot-v$version-windows.zip"
+          $checksum = "$zip.sha256"
+          $notes = "docs\releases\v$version.md"
+          gh release create $tag $zip $checksum --title "ForgePilot v$version" --notes-file $notes

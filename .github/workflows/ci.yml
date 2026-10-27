@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Repository readiness
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build Windows release package
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\scripts\package-release.ps1 -SkipTests
+
+      - name: Upload Windows package smoke artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: forgepilot-windows-package
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error

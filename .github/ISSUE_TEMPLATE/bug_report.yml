@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible ForgePilot problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Please remove secrets and private source code before submitting."
+  - type: input
+    id: version
+    attributes:
+      label: ForgePilot version
+      placeholder: "0.18.0"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, RAM, CPU/GPU if relevant, Ollama/model if used, and `forgepilot health` summary.
+    validations:
+      required: true
+  - type: textarea
+    id: prompt
+    attributes:
+      label: Prompt or minimal reproduction
+      description: Provide the smallest non-sensitive prompt/steps that reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and last visible progress phase
+    validations:
+      required: true

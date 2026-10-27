@@ -9,3 +9,6 @@ node_modules/
 .forgepilot/keys/
 .forgepilot/recovery/
 .forgepilot/computer/
+dist/
+.forgepilot/dashboard/
+.forgepilot/checkpoints/
