@@ -1,7 +1,7 @@
 {
   "name": "forgepilot",
-  "version": "0.18.0",
-  "description": "Local-first verified software engineering agent with one universal prompt, one-click Windows install/run, adaptive low-resource operation, hard watchdogs, signed provenance, and reversible verified changes.",
+  "version": "0.19.0",
+  "description": "Local-first verified software engineering agent with one universal prompt, finished deliverable packaging, adaptive low-resource operation, watchdogs, diagnostics, signed provenance, and reversible verified changes.",
   "type": "module",
   "bin": {
     "forgepilot": "./src/cli.js"

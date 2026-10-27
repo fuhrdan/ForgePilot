@@ -61,6 +61,19 @@ function renderMarkdown(report) {
         lines.push("");
     }
 
+    if (report.deliverable) {
+        lines.push("## Finished Deliverable", "");
+        if (report.deliverable.unavailable) {
+            lines.push(`- Packaging unavailable: ${report.deliverable.error ?? "unknown error"}`);
+        } else {
+            lines.push(`- Project: ${report.deliverable.project?.name ?? "unknown"} (${report.deliverable.project?.ecosystem ?? "unknown"})`);
+            if (report.deliverable.primary?.path) lines.push(`- Primary output: \`${report.deliverable.primary.path}\``);
+            lines.push(`- Artifacts: ${report.deliverable.artifacts?.length ?? 0}`);
+            if (report.deliverable.launcher?.entry) lines.push(`- Runnable entry: \`${report.deliverable.launcher.entry}\``);
+        }
+        lines.push("");
+    }
+
     if (report.sandbox?.enabled) {
         lines.push("## Sandbox", "");
         lines.push(`- Provider: ${report.sandbox.provider?.kind ?? "unknown"}`);

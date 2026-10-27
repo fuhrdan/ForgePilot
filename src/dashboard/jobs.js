@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildRepositoryContext } from "../repository/context.js";
-import { createTaskId } from "../core/state.js";
+import { createTaskId, loadState } from "../core/state.js";
 import { verifyReportProvenance } from "../security/provenance.js";
 import { APPROVAL_CATEGORIES } from "../security/approvals.js";
 import { applyRecipe } from "./recipes.js";
@@ -13,6 +13,7 @@ import { createWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, rollbackWorkspa
 import { buildRuntimeHealth } from "../product/runtime-health.js";
 import { buildPatchReview } from "../repository/patch-review.js";
 import { buildDashboardConfidence } from "../quality/confidence.js";
+import { diagnoseFailure } from "../product/failure-diagnosis.js";
 import { createSimpleBuildWorkspace, buildSimpleTask, SIMPLE_BUILD_DEFAULTS } from "../product/simple-build.js";
 import { classifyUniversalIntent, resolveUniversalWorkspace, buildUniversalTask } from "../product/universal-prompt.js";
 
@@ -247,7 +248,7 @@ export class DashboardJobManager {
         const job = {
             id, workspace: resolved, goal, effectiveGoal: goal, recipeId: null, recipeName: null, autonomy: "universal",
             approvals: inferred.approvals, sandbox: false, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null, completedAt: null, exitCode: null,
-            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
+            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null, diagnosis: null, deliverable: null,
             simpleBuild: true, universalPrompt: true, intent: inferred.intent, projectName: allocated.projectName, watchdog: task.watchdog, lastActivityAt: null,
             log: `${allocated.created ? "Created" : "Using"} workspace: ${resolved}\nInferred intent: ${inferred.intent}\nCapabilities: ${inferred.approvals.join(", ") || "read-only"}\n`, child: null, error: null
         };
@@ -275,7 +276,7 @@ export class DashboardJobManager {
         const job = {
             id, workspace: resolved, goal, effectiveGoal: goal, recipeId: null, recipeName: null, autonomy: "simple",
             approvals: ["file_write", "command_exec"], sandbox: false, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null, completedAt: null, exitCode: null,
-            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
+            taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf, preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null, diagnosis: null, deliverable: null,
             simpleBuild: true, projectName: allocated.projectName, watchdog: task.watchdog, lastActivityAt: null, log: allocated.created ? `Created project workspace: ${resolved}\n` : `Using existing project: ${resolved}\n`, child: null, error: null
         };
         this.jobs.set(id, job);
@@ -325,7 +326,7 @@ export class DashboardJobManager {
             id, workspace: resolved, goal: cleanGoal, effectiveGoal, recipeId: recipe?.id ?? null, recipeName: recipe?.name ?? null,
             autonomy: selectedAutonomy, approvals: grants, sandbox: sandboxEnabled, status: "queued", phase: "queued", createdAt: new Date().toISOString(), startedAt: null,
             completedAt: null, exitCode: null, taskId, taskPath, reportPath: null, markdownPath: null, signed: false, retryOf,
-            preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null,
+            preflight, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, runtime: null, diagnosis: null, deliverable: null,
             simpleBuild: false, projectName: null, watchdog: null, lastActivityAt: null, log: "", child: null, error: null
         };
         this.jobs.set(id, job);
@@ -423,6 +424,7 @@ export class DashboardJobManager {
         job.phase = "starting";
         await this.persist();
         const args = [this.cliPath, "run", job.taskPath, "--workspace", job.workspace, "--planner", "ollama", "--apply"];
+        if (job.resume) args.push("--resume");
         if (job.approvals.length) args.push("--approve", job.approvals.join(","));
         if (job.sandbox) args.push("--sandbox");
         const child = this.spawner(this.nodePath, args, {
@@ -501,6 +503,7 @@ export class DashboardJobManager {
             try {
                 const report = job.reportPath ? JSON.parse(await fs.readFile(path.resolve(job.reportPath), "utf8")) : null;
                 if (report) {
+                    job.deliverable = report.deliverable ?? null;
                     job.confidence = buildDashboardConfidence(report, {
                         signed: job.signed,
                         preflight: job.preflight,
@@ -518,6 +521,7 @@ export class DashboardJobManager {
         }
         job.status = finalStatus;
         job.phase = finalStatus === "pass" ? "completed" : finalStatus === "cancelled" ? "cancelled" : (job.error && /job limit|No useful process output/i.test(job.error) ? "watchdog_stopped" : "failed");
+        job.diagnosis = finalStatus === "fail" ? diagnoseFailure({ error: job.error, log: job.log, exitCode: job.exitCode }) : null;
         await this.persist();
         this.drain();
     }
@@ -544,6 +548,17 @@ export class DashboardJobManager {
     async retry(id) {
         const job = this.jobs.get(String(id));
         if (!job || ["queued", "running", "paused"].includes(job.status)) return null;
+        if (job.status === "interrupted" && job.taskId && job.taskPath) {
+            const resumable = await loadState(job.workspace, job.taskId).catch(() => null);
+            if (resumable) {
+                const nextId = crypto.randomBytes(8).toString("hex");
+                const resumed = { ...persistentJob(job), id: nextId, status: "queued", phase: "queued_resume", child: null, createdAt: new Date().toISOString(), startedAt: null, completedAt: null, exitCode: null, error: null, log: "", reportPath: null, markdownPath: null, signed: false, retryOf: job.id, resume: true, checkpoint: null, changeSet: null, rollback: null, patchReview: null, confidence: null, diagnosis: null, deliverable: null };
+                this.jobs.set(nextId, resumed);
+                await this.persist();
+                this.drain();
+                return resumed;
+            }
+        }
         if (job.universalPrompt) return this.createUniversal({ prompt: job.goal, workspace: job.workspace, retryOf: job.id });
         if (job.simpleBuild) return this.createSimple({ description: job.goal, workspace: job.workspace, projectName: job.projectName, retryOf: job.id });
         return this.create({

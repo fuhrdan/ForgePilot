@@ -23,7 +23,7 @@ function requireFile(rel) {
   ".github/ISSUE_TEMPLATE/bug_report.yml",
   ".github/ISSUE_TEMPLATE/feature_request.yml",
   "docs/INSTALLATION.md", "docs/RELEASING.md", `docs/releases/v${version}.md`,
-  "scripts/package-release.ps1"
+  "scripts/package-release.ps1", "scripts/update-windows.ps1"
 ].forEach(requireFile);
 
 if (pkg.engines?.node !== ">=22") failures.push("package.json engines.node must be >=22");

@@ -1,0 +1,16 @@
+function has(text, pattern) { return pattern.test(String(text ?? "")); }
+
+export function diagnoseFailure({ error = "", log = "", exitCode = null } = {}) {
+    const text = `${error}\n${log}`;
+    const base = { code: "unknown", title: "ForgePilot could not complete the task.", explanation: "The run stopped before ForgePilot could produce a verified result.", action: "Open the activity log or create a diagnostic bundle for more detail.", automaticFixAvailable: false };
+    if (has(text, /No useful process output|WATCHDOG STOP/i)) return { code: "no-progress", title: "The build stopped because it made no visible progress.", explanation: "ForgePilot's watchdog terminated a stalled model/build process instead of leaving it running indefinitely.", action: "Retry; ForgePilot may choose a smaller local model. If it repeats, run `forgepilot health` or create diagnostics.", automaticFixAvailable: true };
+    if (has(text, /Overall job limit reached/i)) return { code: "overall-timeout", title: "The build exceeded its maximum run time.", explanation: "The bounded job timer stopped the task.", action: "Retry with a smaller scope or inspect the last active phase.", automaticFixAvailable: false };
+    if (has(text, /out of memory|requires more memory|cannot allocate|cuda.*memory/i)) return { code: "model-memory", title: "The local AI model exceeded available memory.", explanation: "The selected model is too large for current free RAM/VRAM.", action: "ForgePilot should retry with a smaller installed model; close large applications if needed.", automaticFixAvailable: true };
+    if (has(text, /ollama.*(not|refused|unavailable)|ECONNREFUSED.*11434/i)) return { code: "ollama-unavailable", title: "The local AI runtime is not responding.", explanation: "ForgePilot could not reach Ollama on localhost.", action: "Start Ollama, then retry. `forgepilot health` can confirm connectivity.", automaticFixAvailable: true };
+    if (has(text, /javac.*not (found|recognized)|'javac' is not recognized|spawn javac ENOENT/i)) return { code: "jdk-missing", title: "The Java compiler is not installed or not on PATH.", explanation: "A Java runtime alone is not enough to compile this project.", action: "Install a JDK and retry.", automaticFixAvailable: true };
+    if (has(text, /dotnet.*not (found|recognized)|spawn dotnet ENOENT/i)) return { code: "dotnet-missing", title: ".NET SDK was not found.", explanation: "The project requires the .NET SDK to build.", action: "Install a supported .NET SDK and retry.", automaticFixAvailable: true };
+    if (has(text, /node.*not (found|recognized)|spawn node ENOENT/i)) return { code: "node-missing", title: "Node.js was not found.", explanation: "This task requires Node.js.", action: "Run ForgePilot repair/setup or reinstall with the one-click installer.", automaticFixAvailable: true };
+    if (has(text, /permission denied|EACCES|EPERM/i)) return { code: "permission", title: "The operating system denied access.", explanation: "ForgePilot could not read, write, or execute something required by the task.", action: "Check folder permissions and whether the file is locked by another application.", automaticFixAvailable: false };
+    if (exitCode !== null) base.explanation += ` Process exit code: ${exitCode}.`;
+    return base;
+}

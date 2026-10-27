@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.0 — Reliability + Finished Deliverables
+
+- Packages a finished deliverable after verified PASS, preferring real build artifacts and otherwise producing a runnable source bundle when an entry point is identifiable.
+- Adds privacy-safe diagnostic ZIP generation with no source code, prompt contents, secrets, or repository filenames by default.
+- Adds local Ollama model benchmarking and optional persistence of the fastest installed passing model.
+- Adds actionable failure diagnosis for watchdog stalls, local-model memory pressure, missing toolchains, and permission failures.
+- Adds installation repair checks and GitHub Release update checks.
+- Resumes interrupted dashboard jobs from the core ForgePilot state checkpoint when one exists instead of blindly restarting.
+- Keeps the one-click Windows install/run, universal prompt, low-resource governor, watchdogs, signed reports, and reversible checkpoints.
+
 ## 0.18.0 — GitHub Release Readiness
 
 - Cleans up the repository into a conventional open-source project layout while preserving the one-prompt product experience.

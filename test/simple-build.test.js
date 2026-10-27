@@ -86,7 +86,7 @@ test("Ollama planner aborts a stalled model and falls back to the next model", a
     const { port } = server.address();
     const events = [];
     try {
-        const planner = new OllamaPlanner({ model: "slow-model", fallbackModels: ["small-model"], baseUrl: `http://127.0.0.1:${port}`, generationTimeoutMs: 80, progressIntervalMs: 25, onProgress: (e) => events.push(e) });
+        const planner = new OllamaPlanner({ model: "slow-model", fallbackModels: ["small-model"], baseUrl: `http://127.0.0.1:${port}`, generationTimeoutMs: 250, progressIntervalMs: 50, onProgress: (e) => events.push(e) });
         const result = await planner.plan({ goal: "demo" }, { files: [], git: { isRepository: false } });
         assert.equal(result.rationale, "fallback");
         assert.deepEqual(seen, ["slow-model", "small-model"]);

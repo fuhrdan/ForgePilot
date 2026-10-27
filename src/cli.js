@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { ScriptedPlanner } from "./planners/scripted.js";
 import { OllamaPlanner } from "./planners/ollama.js";
 import { initializeWorkspace, ensureWorkspace } from "./core/workspace.js";
@@ -30,8 +32,12 @@ import { runSelfTest } from "./product/runtime-health.js";
 import { buildPreflight } from "./repository/preflight.js";
 import { rollbackWorkspaceCheckpoint } from "./repository/checkpoint.js";
 import { buildEvidenceConfidence } from "./quality/confidence.js";
+import { finalizeDeliverable } from "./product/deliverables.js";
+import { createDiagnosticBundle } from "./product/diagnostics.js";
+import { benchmarkOllamaModels } from "./product/model-benchmark.js";
+import { checkInstallation, checkForUpdate } from "./product/maintenance.js";
 
-const VERSION = "0.18.0";
+const VERSION = "0.19.0";
 
 function usage() {
     console.log(`ForgePilot v${VERSION}\n\n` +
@@ -40,6 +46,11 @@ function usage() {
 `  forgepilot doctor\n` +
 `  forgepilot setup [--json]\n` +
 `  forgepilot health [workspace] [--json]\n` +
+`  forgepilot benchmark [--ollama-url URL] [--max-models N] [--json]\n` +
+`  forgepilot diagnostics [workspace] [--output PATH]\n` +
+`  forgepilot repair [workspace] [--json]\n` +
+`  forgepilot update-check [--json]\n` +
+`  forgepilot update [--force]\n` +
 `  forgepilot launch [workspace] [--port N] [--no-browser]\n` +
 `  forgepilot prompt <request> [--workspace PATH] [--model MODEL]\n` +
 `  forgepilot build <request> [--workspace PATH] [--model MODEL]\n` +
@@ -96,7 +107,7 @@ function usage() {
 function parseOptions(args) {
     const options = {};
     const positionals = [];
-    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all", "json", "no-browser", "dry-run"]);
+    const flags = new Set(["apply", "resume", "computer", "sandbox", "sandbox-keep", "agents", "no-agents", "approve-all", "json", "no-browser", "dry-run", "save", "force"]);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
@@ -355,6 +366,18 @@ async function runTask(taskFile, options) {
             }
         }
 
+        let deliverable = null;
+        if (status === "PASS" && options.apply) {
+            try {
+                console.log("Progress: Packaging finished deliverable");
+                deliverable = await finalizeDeliverable(originalWorkspace, { taskId, projectName: task.metadata?.projectName ?? null });
+                console.log(`Output: ${deliverable.primary.path}`);
+            } catch (error) {
+                deliverable = { unavailable: true, error: error.message };
+                console.log(`Output packaging warning: ${error.message}`);
+            }
+        }
+
         const report = {
             version: VERSION,
             createdAt: new Date().toISOString(),
@@ -379,7 +402,8 @@ async function runTask(taskFile, options) {
             computer: computerInfo,
             profile: profile ? { name: profile.name, requested: profile.requested, hardware: useMachineDefaults?.hardware ?? profile.hardware, tier: useMachineDefaults?.tier ?? null, model: effectiveOptions.model ?? profile.model, maxContextTokens: task.maxContextTokens ?? profile.maxContextTokens, maxRepairs, maxReviewRounds } : null,
             security: { secrets: secretStore.summary(), approvals: approvalManager.snapshot() },
-            sandbox: sandboxInfo
+            sandbox: sandboxInfo,
+            deliverable
         };
         report.confidence = buildEvidenceConfidence(report);
 
@@ -660,6 +684,82 @@ async function universalPromptCommand(description, options = {}) {
     return runTask(taskPath, { ...options, workspace: allocated.workspace, planner: "ollama", apply: true, approve: inferred.approvals.join(","), "no-agents": true, "max-repairs": task.maxRepairs });
 }
 
+
+async function benchmarkCommand(options = {}) {
+    const maxModels = Math.max(1, Math.min(5, Number(options["max-models"] ?? 3)));
+    const result = await benchmarkOllamaModels({ baseUrl: options["ollama-url"] ?? "http://127.0.0.1:11434", maxModels });
+    if (options.save && result.recommended) {
+        const existing = (await loadMachineConfig().catch(() => null)) ?? {};
+        await saveMachineConfig({ ...existing, version: VERSION, model: result.recommended, benchmark: { savedAt: new Date().toISOString(), recommended: result.recommended, results: result.results } });
+        result.saved = true;
+    }
+    if (options.json) return console.log(JSON.stringify(result, null, 2));
+    console.log(`ForgePilot v${VERSION} local-model benchmark`);
+    if (!result.available) {
+        console.log(`Ollama: unavailable (${result.error})`);
+        process.exitCode = 2;
+        return;
+    }
+    for (const item of result.results) console.log(`${item.passed ? "[PASS]" : "[FAIL]"} ${item.model}: ${item.elapsedMs} ms${item.tokensPerSecond ? ` / ${item.tokensPerSecond} tok/s` : ""}${item.error ? ` / ${item.error}` : ""}`);
+    console.log(`Recommended installed model: ${result.recommended ?? "none"}`);
+    if (result.saved) console.log("Saved recommendation to machine profile.");
+    if (!result.recommended) process.exitCode = 2;
+}
+
+async function diagnosticsCommand(workspaceArg = ".", options = {}) {
+    const workspace = await ensureWorkspace(workspaceArg);
+    const bundle = await createDiagnosticBundle(workspace, { version: VERSION, outputPath: options.output ?? null });
+    console.log(`ForgePilot v${VERSION} diagnostics`);
+    console.log(`Bundle: ${bundle.path}`);
+    console.log("Privacy: source code, prompt contents, secrets, and repository file names are excluded by default.");
+}
+
+async function repairCommand(workspaceArg = ".", options = {}) {
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const result = await checkInstallation(rootDir, { workspace: workspaceArg });
+    if (options.json) return console.log(JSON.stringify(result, null, 2));
+    console.log(`ForgePilot v${VERSION} installation repair check`);
+    for (const file of result.files) console.log(`${file.passed ? "[PASS]" : "[FAIL]"} ${file.path}`);
+    for (const check of result.health?.checks ?? []) console.log(`${check.passed ? "[PASS]" : check.optional ? "[WARN]" : "[FAIL]"} ${check.name}: ${check.detail ?? ""}`);
+    console.log(`Result: ${result.passed ? "PASS" : "NEEDS REPAIR"}`);
+    if (!result.passed) process.exitCode = 2;
+}
+
+async function updateCheckCommand(options = {}) {
+    const result = await checkForUpdate({ currentVersion: VERSION });
+    if (options.json) return console.log(JSON.stringify(result, null, 2));
+    console.log(`ForgePilot v${VERSION} update check`);
+    if (!result.available) {
+        console.log(`GitHub release check unavailable: ${result.error}`);
+        process.exitCode = 2;
+        return;
+    }
+    console.log(`Current: ${result.currentVersion}`);
+    console.log(`Latest:  ${result.latestVersion ?? "unknown"}`);
+    console.log(`Update:  ${result.updateAvailable ? "AVAILABLE" : "current"}`);
+    if (result.asset) console.log(`Windows asset: ${result.asset.name}`);
+}
+
+
+async function updateCommand(options = {}) {
+    if (process.platform !== "win32") throw new Error("Automatic update is currently supported on Windows only. Use `forgepilot update-check` on other platforms.");
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const script = path.join(rootDir, "scripts", "update-windows.ps1");
+    const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script];
+    if (options.force) args.push("-Force");
+    console.log(`ForgePilot v${VERSION} trusted updater`);
+    console.log("The updater will download only the GitHub Release ZIP, verify its SHA-256 asset, and then run the bundled one-click installer.");
+    const code = await new Promise((resolve, reject) => {
+        const child = spawn("powershell.exe", args, { stdio: "inherit", shell: false, windowsHide: false });
+        child.once("error", reject);
+        child.once("close", (value) => resolve(value ?? -1));
+    });
+    if (code !== 0) {
+        process.exitCode = code || 2;
+        throw new Error(`Windows updater exited with code ${code}.`);
+    }
+}
+
 async function main() {
     const [command, ...rest] = process.argv.slice(2);
     if (!command || ["help", "--help", "-h"].includes(command)) return usage();
@@ -667,6 +767,11 @@ async function main() {
     if (command === "doctor") return doctor();
     if (command === "setup") { const { options } = parseOptions(rest); return setupCommand(options); }
     if (command === "health") { const { options, positionals } = parseOptions(rest); return healthCommand(positionals[0] ?? ".", options); }
+    if (command === "benchmark") { const { options } = parseOptions(rest); return benchmarkCommand(options); }
+    if (command === "diagnostics") { const { options, positionals } = parseOptions(rest); return diagnosticsCommand(positionals[0] ?? ".", options); }
+    if (command === "repair") { const { options, positionals } = parseOptions(rest); return repairCommand(positionals[0] ?? ".", options); }
+    if (command === "update-check") { const { options } = parseOptions(rest); return updateCheckCommand(options); }
+    if (command === "update") { const { options } = parseOptions(rest); return updateCommand(options); }
     if (command === "launch") { const { options, positionals } = parseOptions(rest); return launchCommand(positionals[0], options); }
     if (command === "profile") return profileCommand(rest[0] ?? "auto");
     if (command === "recover") return recoverCommand(rest[0] ?? ".");

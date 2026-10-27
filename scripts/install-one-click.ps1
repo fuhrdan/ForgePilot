@@ -76,7 +76,7 @@ function Install-PortableNode {
     return $null
 }
 
-Write-Host "[1/7] Checking Windows prerequisites..."
+Write-Host "[1/8] Checking Windows prerequisites..."
 $node = Find-Exe "node.exe" @("%ProgramFiles%\nodejs\node.exe", "%LOCALAPPDATA%\Programs\nodejs\node.exe")
 $nodeOk = Test-Node22 $node
 if (-not $nodeOk) {
@@ -100,7 +100,7 @@ if (-not $git) {
     $git = Find-Exe "git.exe" @("%ProgramFiles%\Git\cmd\git.exe", "%LOCALAPPDATA%\Programs\Git\cmd\git.exe")
 }
 
-Write-Host "[2/7] Installing ForgePilot to $InstallDir..."
+Write-Host "[2/8] Installing ForgePilot to $InstallDir..."
 if (Test-Path $InstallDir) {
     Get-ChildItem $InstallDir -Force | Where-Object { $_.Name -notin @('config','logs','runtime') } | Remove-Item -Recurse -Force
 } else {
@@ -128,14 +128,14 @@ if ($parts -notcontains $InstallDir) {
 }
 Refresh-Path
 
-Write-Host "[3/7] Inspecting this PC and selecting a safe runtime profile..."
+Write-Host "[3/8] Inspecting this PC and selecting a safe runtime profile..."
 $env:FORGEPILOT_HOME = $InstallDir
 & $node (Join-Path $InstallDir "src\cli.js") setup
 if ($LASTEXITCODE -ne 0) { throw "ForgePilot system inspection failed." }
 $configPath = Join-Path $InstallDir "config\machine-profile.json"
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
-Write-Host "[4/7] Checking optional local AI runtime..."
+Write-Host "[4/8] Checking optional local AI runtime..."
 $ollama = Find-Exe "ollama.exe" @("%LOCALAPPDATA%\Programs\Ollama\ollama.exe", "%ProgramFiles%\Ollama\ollama.exe")
 if (-not $SkipAI -and -not $ollama) {
     [void](Install-WithWinget "Ollama.Ollama" "Ollama")
@@ -147,7 +147,7 @@ if (-not $SkipAI -and $ollama -and -not $SkipModelPull) {
     $freeDisk = 0
     if ($null -ne $config.hardware.disk.freeGiB) { $freeDisk = [double]$config.hardware.disk.freeGiB }
     if ($model -and ($freeDisk -eq 0 -or $freeDisk -ge 8)) {
-        Write-Host "[5/7] Preparing low-impact local coding model: $model"
+        Write-Host "[5/8] Preparing low-impact local coding model: $model"
         try {
             & $ollama pull $model
             if ($LASTEXITCODE -ne 0) { Write-Warning "Model pull did not complete. ForgePilot is installed; you can run 'ollama pull $model' later." }
@@ -158,13 +158,25 @@ if (-not $SkipAI -and $ollama -and -not $SkipModelPull) {
         Write-Warning "Skipping AI model download because free disk is low. Recommended bootstrap model: $model"
     }
 } else {
-    Write-Host "[5/7] AI model bootstrap skipped or Ollama unavailable."
+    Write-Host "[5/8] AI model bootstrap skipped or Ollama unavailable."
 }
 
 # Re-run inspection after optional installs so tool availability is current.
 & $node (Join-Path $InstallDir "src\cli.js") setup | Out-Host
 
-Write-Host "[6/7] Creating one-click launcher..."
+Write-Host "[6/8] Benchmarking installed local model(s) when available..."
+if (-not $SkipAI -and $ollama) {
+    try {
+        & $node (Join-Path $InstallDir "src\cli.js") benchmark --max-models 3 --save | Tee-Object -FilePath (Join-Path $LogDir "model-benchmark.txt") | Out-Host
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Model benchmark did not complete; ForgePilot will retain the conservative hardware-selected model." }
+    } catch {
+        Write-Warning "Model benchmark unavailable: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "Local AI benchmark skipped."
+}
+
+Write-Host "[7/8] Creating one-click launcher..."
 $desktop = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktop "ForgePilot.lnk"
 $wshell = New-Object -ComObject WScript.Shell
@@ -174,9 +186,9 @@ $shortcut.WorkingDirectory = $Workspace
 $shortcut.Description = "Run ForgePilot"
 $shortcut.Save()
 
-Write-Host "[7/7] Verifying installation..."
+Write-Host "[8/8] Verifying installation..."
 $version = (& $node (Join-Path $InstallDir "src\cli.js") --version).Trim()
-if ($version -ne "0.18.0") { throw "Installed ForgePilot version check failed: $version" }
+if ($version -ne "0.19.0") { throw "Installed ForgePilot version check failed: $version" }
 Write-Host "Running local health/self-test..."
 & $node (Join-Path $InstallDir "src\cli.js") health $Workspace | Tee-Object -FilePath (Join-Path $LogDir "health.txt") | Out-Host
 if ($LASTEXITCODE -ne 0) { Write-Warning "ForgePilot installed, but the health check reports insufficient current resources. Close other applications and run ForgePilot again." }

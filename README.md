@@ -11,7 +11,7 @@ ForgePilot is a local-first software-engineering agent designed around one unive
 
 ## Quick start — Windows
 
-1. Download **`ForgePilot-v0.18.0-windows.zip`** from the [latest GitHub Release](https://github.com/fuhrdan/ForgePilot/releases/latest).
+1. Download **`ForgePilot-v0.19.0-windows.zip`** from the [latest GitHub Release](https://github.com/fuhrdan/ForgePilot/releases/latest).
 2. Extract the ZIP.
 3. Double-click **`INSTALL_FORGEPILOT.cmd`** once.
 4. Use the **ForgePilot** desktop shortcut from then on.
@@ -74,6 +74,24 @@ forgepilot doctor
 
 `forgepilot build` remains a backward-compatible alias for the universal prompt path.
 
+
+## Finished deliverables and reliability
+
+A verified PASS now produces a finished deliverable under the project's private `.forgepilot/deliverables/` area. ForgePilot prefers real build artifacts such as `.exe`, `.jar`, `.whl`, or release ZIPs; otherwise it creates a portable source bundle and adds `RUN.cmd` / `run.sh` when it can identify an entry point.
+
+Useful reliability commands:
+
+```powershell
+forgepilot health
+forgepilot benchmark --save
+forgepilot diagnostics
+forgepilot repair
+forgepilot update-check
+forgepilot update        # Windows, explicit/opt-in only
+```
+
+`forgepilot diagnostics` deliberately excludes source code, prompt contents, secrets, and repository filenames by default. The Windows updater downloads only the published GitHub Release assets, verifies the release SHA-256 file, and then runs the same one-click installer used for a clean install.
+
 ## Development
 
 Requirements:
@@ -107,7 +125,7 @@ test/         Node test suite
 
 A tag named `vX.Y.Z` runs the GitHub release workflow. It validates the repository, runs the full test suite, builds the Windows one-click release ZIP and SHA-256 file, then publishes them to GitHub Releases.
 
-See [Release process](docs/RELEASING.md) and [v0.18.0 release notes](docs/releases/v0.18.0.md).
+See [Release process](docs/RELEASING.md) and [v0.19.0 release notes](docs/releases/v0.19.0.md).
 
 ## Documentation
 
@@ -120,6 +138,7 @@ Start with:
 - [Sandboxing](docs/SANDBOX.md)
 - [Computer control](docs/COMPUTER_CONTROL.md)
 - [Validation](docs/VALIDATION.md)
+- [Reliability and deliverables](docs/RELIABILITY.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Contributing and security
