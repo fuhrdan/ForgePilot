@@ -2,6 +2,10 @@
 
 ## 0.19.0 — Reliability + Finished Deliverables
 
+
+- CI reliability hotfix: GitHub Actions now uses `npm run test:ci` with Node 22 `--test-force-exit` and bounded test concurrency, preventing completed suites from hanging on leftover handles while retaining all assertions.
+- Windows command hotfix: `npm`/`npx` verification gates now resolve their `.cmd` shims to npm's JavaScript CLI and run through `node.exe` with `shell: false`, fixing Windows-only test-first regression-gate failures.
+
 - Packages a finished deliverable after verified PASS, preferring real build artifacts and otherwise producing a runnable source bundle when an entry point is identifiable.
 - Adds privacy-safe diagnostic ZIP generation with no source code, prompt contents, secrets, or repository filenames by default.
 - Adds local Ollama model benchmarking and optional persistence of the fastest installed passing model.

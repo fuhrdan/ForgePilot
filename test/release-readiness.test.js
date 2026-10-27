@@ -32,11 +32,15 @@ test("CI covers Linux and Windows and release automation is tag driven", () => {
     const ci = read(".github/workflows/ci.yml");
     assert.match(ci, /ubuntu-latest/);
     assert.match(ci, /windows-latest/);
-    assert.match(ci, /npm test/);
+    assert.match(ci, /npm run test:ci/);
+    assert.match(ci, /timeout-minutes:/);
+    const pkg = JSON.parse(read("package.json"));
+    assert.equal(pkg.scripts["test:ci"], "node --test --test-force-exit --test-concurrency=4");
     const release = read(".github/workflows/release.yml");
     assert.match(release, /"v\*\.\*\.\*"/);
     assert.match(release, /gh release create/);
     assert.match(release, /package-release\.ps1/);
+    assert.match(release, /npm run test:ci/);
 });
 
 test("README is a concise landing page with release install and universal prompt", () => {

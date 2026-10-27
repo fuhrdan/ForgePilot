@@ -11,6 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout tagged commit
@@ -34,7 +35,7 @@ jobs:
         run: npm run check
 
       - name: Test
-        run: npm test
+        run: npm run test:ci
 
       - name: Package one-click Windows release
         shell: powershell

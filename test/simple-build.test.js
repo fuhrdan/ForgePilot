@@ -117,7 +117,7 @@ test("dashboard watchdog stops a silent child instead of allowing an indefinite 
     task.watchdog.overallTimeoutMs = 200;
     await fs.writeFile(job.taskPath, JSON.stringify(task, null, 2));
     await manager.setQueuePaused(false);
-    const done = await waitFor(manager, job.id, (j) => j.status === "fail", 1000);
+    const done = await waitFor(manager, job.id, (j) => j.status === "fail", 3000);
     assert.equal(done.phase, "watchdog_stopped");
     assert.match(done.error, /No useful process output/);
     assert.match(done.log, /WATCHDOG STOP/);

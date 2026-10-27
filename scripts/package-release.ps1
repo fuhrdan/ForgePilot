@@ -18,7 +18,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Release-readiness check failed." }
 
     if (-not $SkipTests) {
-        npm test
+        npm run test:ci
         if ($LASTEXITCODE -ne 0) { throw "Test suite failed." }
     }
 
